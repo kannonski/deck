@@ -2,12 +2,12 @@
 // Columns: TODAY (+now) · NEXT (actionable pool, P3 noise hidden) · WAITING · DONE (today).
 // Navigate h/l/j/k, drag cards H/L, act on the selected card (enter = clone+open a
 // kitty layout to work on it · o open in browser · d done · n ±today · s start/stop ·
-// e describe), capture with `a`, filter with `/`.
-// A bottom pane shows the selected task's cached card. --once dumps the view and exits.
+// e describe), capture with `a`, jot notes with `N`, filter with `/`.
+// A bottom pane shows the task's source link, its notes, and the cached card.
+// Reads/writes the dstask store directly via the dstask library. --once dumps + exits.
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -20,18 +20,21 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	dstask "github.com/naggie/dstask"
 )
 
+// task is the lightweight view model the TUI renders; it's mapped from dstask.Task.
 type task struct {
-	ID       int      `json:"id"`
-	Summary  string   `json:"summary"`
-	Status   string   `json:"status"` // "pending" | "active" (started)
-	Tags     []string `json:"tags"`
-	Project  string   `json:"project"`
-	Priority string   `json:"priority"`
-	Due      string   `json:"due"`
-	Notes    string   `json:"notes"` // source URL
-	Resolved string   `json:"resolved"`
+	ID       int
+	UUID     string
+	Summary  string
+	Status   string // pending | active | paused | resolved
+	Tags     []string
+	Project  string
+	Priority string
+	Due      string // "" or YYYY-MM-DD
+	Notes    string // source URL on line 1, user notes below
+	Resolved string // "" or YYYY-MM-DD
 }
 
 func (t task) has(tag string) bool {
@@ -52,14 +55,19 @@ func (t task) state() string {
 	return ""
 }
 
-func dstaskJSON(args ...string) []task {
-	out, err := exec.Command("dstask", args...).Output()
-	if err != nil {
-		return nil
+// toTask maps a dstask.Task into our view model (time.Time → "YYYY-MM-DD" / "").
+func toTask(dt dstask.Task) task {
+	t := task{
+		ID: dt.ID, UUID: dt.UUID, Summary: dt.Summary, Status: dt.Status,
+		Tags: dt.Tags, Project: dt.Project, Priority: dt.Priority, Notes: dt.Notes,
 	}
-	var ts []task
-	_ = json.Unmarshal(out, &ts)
-	return ts
+	if !dt.Due.IsZero() {
+		t.Due = dt.Due.Format("2006-01-02")
+	}
+	if !dt.Resolved.IsZero() {
+		t.Resolved = dt.Resolved.Format("2006-01-02")
+	}
+	return t
 }
 
 type column struct {
@@ -68,34 +76,48 @@ type column struct {
 	cards  []task
 }
 
+func emptyCols() []column {
+	return []column{
+		{"★ TODAY", lipgloss.Color("183"), nil},
+		{"NEXT", lipgloss.Color("117"), nil},
+		{"WAITING", lipgloss.Color("245"), nil},
+		{"✓ DONE", lipgloss.Color("120"), nil},
+	}
+}
+
 func load() []column {
-	open := dstaskJSON("show-open")
+	conf := dstask.NewConfig()
+	ts, err := dstask.LoadTaskSet(conf.Repo, conf.IDsFile, true) // include resolved for the DONE column
+	if err != nil {
+		return emptyCols()
+	}
 	today := time.Now().Format("2006-01-02")
 
 	var now, next, waiting, done []task
-	for _, t := range open {
-		switch {
-		case t.has("now"):
-			now = append(now, t)
-		case t.has("waiting"):
-			waiting = append(waiting, t)
-		case t.Priority != "P3": // hide the declassified / vuln-mgmt noise from the active flow
-			next = append(next, t)
-		}
-	}
-	for _, t := range dstaskJSON("show-resolved") {
-		if strings.HasPrefix(t.Resolved, today) {
-			done = append(done, t)
+	for _, dt := range ts.AllTasks() {
+		t := toTask(dt)
+		switch dt.Status {
+		case dstask.STATUS_RESOLVED:
+			if strings.HasPrefix(t.Resolved, today) {
+				done = append(done, t)
+			}
+		case dstask.STATUS_PENDING, dstask.STATUS_ACTIVE, dstask.STATUS_PAUSED,
+			dstask.STATUS_DELEGATED, dstask.STATUS_DEFERRED:
+			switch {
+			case t.has("now"):
+				now = append(now, t)
+			case t.has("waiting"):
+				waiting = append(waiting, t)
+			case t.Priority != "P3": // hide the declassified / vuln-mgmt noise from the active flow
+				next = append(next, t)
+			}
 		}
 	}
 	sort.SliceStable(next, func(i, j int) bool { return next[i].Priority < next[j].Priority })
 
-	return []column{
-		{"★ TODAY", lipgloss.Color("183"), now},
-		{"NEXT", lipgloss.Color("117"), next},
-		{"WAITING", lipgloss.Color("245"), waiting},
-		{"✓ DONE", lipgloss.Color("120"), done},
-	}
+	cols := emptyCols()
+	cols[0].cards, cols[1].cards, cols[2].cards, cols[3].cards = now, next, waiting, done
+	return cols
 }
 
 func areaColor(p string) lipgloss.Color {
@@ -236,7 +258,125 @@ func (m model) reloaded() model {
 	return m.scrolled()
 }
 
-func run(args ...string) { _ = exec.Command("dstask", args...).Run() }
+// ── store writes, via the dstask library (no subprocess) ──
+
+func addTag(t *dstask.Task, tag string) {
+	if !dstask.StrSliceContains(t.Tags, tag) {
+		t.Tags = append(t.Tags, tag)
+	}
+}
+
+func removeTag(t *dstask.Task, tag string) {
+	out := make([]string, 0, len(t.Tags))
+	for _, x := range t.Tags {
+		if x != tag {
+			out = append(out, x)
+		}
+	}
+	t.Tags = out
+}
+
+// mutate loads the store, applies fn to task #id, then saves + commits.
+func mutate(id int, msg string, fn func(t *dstask.Task)) error {
+	c := dstask.NewConfig()
+	ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, false)
+	if err != nil {
+		return err
+	}
+	t, err := ts.GetByID(id)
+	if err != nil {
+		return err
+	}
+	fn(&t)
+	if err := ts.UpdateTask(t); err != nil {
+		return err
+	}
+	ts.SavePendingChanges()
+	return dstask.GitCommit(c.Repo, msg+" %s", t)
+}
+
+func done(id int) error {
+	return mutate(id, "Resolved", func(t *dstask.Task) {
+		t.Status, t.Resolved = dstask.STATUS_RESOLVED, time.Now()
+	})
+}
+func startTask(id int) error {
+	return mutate(id, "Started", func(t *dstask.Task) { t.Status = dstask.STATUS_ACTIVE })
+}
+func stopTask(id int) error {
+	return mutate(id, "Stopped", func(t *dstask.Task) { t.Status = dstask.STATUS_PAUSED })
+}
+func setTags(id int, add, remove []string) error {
+	return mutate(id, "Modified", func(t *dstask.Task) {
+		for _, a := range add {
+			addTag(t, a)
+		}
+		for _, r := range remove {
+			removeTag(t, r)
+		}
+	})
+}
+
+// addTask captures a new task, parsing +tags / project: / Pn from the text.
+func addTask(text string) error {
+	c := dstask.NewConfig()
+	ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, false)
+	if err != nil {
+		return err
+	}
+	q := dstask.ParseQuery(strings.Fields(text)...)
+	if strings.TrimSpace(q.Text) == "" {
+		return nil
+	}
+	t := dstask.Task{
+		WritePending: true, Status: dstask.STATUS_PENDING, Summary: q.Text,
+		Tags: q.Tags, Project: q.Project, Priority: q.Priority, Due: q.Due, Notes: q.Note,
+	}
+	if t, err = ts.LoadTask(t); err != nil {
+		return err
+	}
+	ts.SavePendingChanges()
+	return dstask.GitCommit(c.Repo, "Added %s", t)
+}
+
+// act reloads + reports success, or surfaces the error in the status line.
+func (m model) act(err error, ok string) model {
+	if err != nil {
+		m.status = "⚠ " + err.Error()
+		return m
+	}
+	m = m.reloaded()
+	m.status = ok
+	return m
+}
+
+// splitNote separates the source URL (line 1, if any) from the user notes below.
+func splitNote(notes string) (url, body string) {
+	notes = strings.TrimRight(notes, "\n")
+	if notes == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(notes, "\n", 2)
+	if strings.HasPrefix(parts[0], "http") {
+		url = strings.TrimSpace(parts[0])
+		if len(parts) > 1 {
+			body = strings.TrimSpace(parts[1])
+		}
+		return
+	}
+	return "", strings.TrimSpace(notes)
+}
+
+// appendNote adds a line to a task's notes (keeps the URL on line 1 if present).
+func appendNote(id int, line string) error {
+	return mutate(id, "Note on", func(t *dstask.Task) {
+		if strings.TrimSpace(t.Notes) == "" {
+			t.Notes = line
+		} else {
+			t.Notes += "\n" + line
+		}
+	})
+}
 
 // ── task cards: the cached "what · status · done =" taskflow generates per source ──
 var (
@@ -293,8 +433,12 @@ func (m model) detailView() string {
 	}
 	body := lipgloss.NewStyle().Foreground(areaColor(t.Project)).Bold(true).Render(trunc(t.Summary, dw-2)) +
 		"\n" + dimStyle.Render(meta)
-	if t.Notes != "" {
-		body += "\n" + dimStyle.Render("↗ "+trunc(t.Notes, dw-2))
+	url, notes := splitNote(t.Notes)
+	if url != "" {
+		body += "\n" + dimStyle.Render("↗ "+trunc(url, dw-2))
+	}
+	if notes != "" {
+		body += "\n\n" + selStyle.Render(fmt.Sprintf("📝 notes (%d)", strings.Count(notes, "\n")+1)) + "\n" + notes
 	}
 	return box.Render(body + "\n\n" + cardText(t))
 }
@@ -368,14 +512,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.card = clampi(m.card, m.visN())
 				return m.scrolled(), nil
 			case tea.KeyEnter:
-				if m.mode == "add" && strings.TrimSpace(m.input) != "" {
-					// pass words separately so dstask parses +tags / project: / Pn
-					run(append([]string{"add"}, strings.Fields(m.input)...)...)
-					txt := m.input
-					m.mode, m.input = "", ""
-					m = m.reloaded()
-					m.status = "+ captured: " + trunc(txt, 40)
-				} else {
+				switch m.mode {
+				case "add":
+					if strings.TrimSpace(m.input) != "" {
+						err := addTask(m.input) // parses +tags / project: / Pn
+						txt := m.input
+						m.mode, m.input = "", ""
+						m = m.act(err, "+ captured: "+trunc(txt, 40))
+					} else {
+						m.mode, m.input = "", ""
+					}
+				case "note":
+					if t, ok := m.selected(); ok && t.ID > 0 && strings.TrimSpace(m.input) != "" {
+						err := appendNote(t.ID, m.input)
+						m.mode, m.input = "", ""
+						m = m.act(err, fmt.Sprintf("📝 noted #%d", t.ID))
+					} else {
+						m.mode, m.input = "", ""
+					}
+				default: // filter
 					m.filter = m.input
 					m.mode, m.input = "", ""
 					m.card = clampi(m.card, m.visN())
@@ -438,30 +593,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode, m.input = "add", ""
 		case "/": // filter the board by area / state / text
 			m.mode, m.input = "filter", ""
+		case "N": // jot a note on the selected card
+			if t, ok := m.selected(); ok && t.ID > 0 {
+				m.mode, m.input = "note", ""
+			}
 
 		// ── actions on the selected card (open tasks only; DONE cards have no id) ──
 		case "enter": // work on it: clone + open a kitty layout tab (suspends to run the layout picker)
 			if t, ok := m.selected(); ok {
-				c := exec.Command(taskflowBin(), "open", t.Notes)
+				url, _ := splitNote(t.Notes)
+				c := exec.Command(taskflowBin(), "open", url)
 				m.status = "opening workspace…"
 				return m, tea.ExecProcess(c, func(err error) tea.Msg { return openedMsg{err != nil} })
 			}
 		case "d": // resolve
 			if t, ok := m.selected(); ok && t.ID > 0 {
-				run(strconv.Itoa(t.ID), "done")
-				m = m.reloaded()
-				m.status = fmt.Sprintf("✓ resolved #%d", t.ID)
+				m = m.act(done(t.ID), fmt.Sprintf("✓ resolved #%d", t.ID))
 			}
 		case "n": // toggle today (+now)
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				if t.has("now") {
-					run(strconv.Itoa(t.ID), "modify", "-now")
-					m = m.reloaded()
-					m.status = fmt.Sprintf("← #%d out of today", t.ID)
+					m = m.act(setTags(t.ID, nil, []string{"now"}), fmt.Sprintf("← #%d out of today", t.ID))
 				} else {
-					run(strconv.Itoa(t.ID), "modify", "+now")
-					m = m.reloaded()
-					m.status = fmt.Sprintf("→ #%d to today", t.ID)
+					m = m.act(setTags(t.ID, []string{"now"}, nil), fmt.Sprintf("→ #%d to today", t.ID))
 				}
 			}
 		case "e": // generate the card for the selected task (async, ~15s)
@@ -471,20 +625,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "s": // start ↔ stop (activate ↔ deactivate)
 			if t, ok := m.selected(); ok && t.ID > 0 {
-				if t.Status == "active" {
-					run(strconv.Itoa(t.ID), "stop")
-					m = m.reloaded()
-					m.status = fmt.Sprintf("■ stopped #%d", t.ID)
+				if t.Status == dstask.STATUS_ACTIVE {
+					m = m.act(stopTask(t.ID), fmt.Sprintf("■ stopped #%d", t.ID))
 				} else {
-					run(strconv.Itoa(t.ID), "start")
-					m = m.reloaded()
-					m.status = fmt.Sprintf("▶ started #%d", t.ID)
+					m = m.act(startTask(t.ID), fmt.Sprintf("▶ started #%d", t.ID))
 				}
 			}
 		case "o": // open the source (issue/MR/mail) in the browser
 			if t, ok := m.selected(); ok {
-				if strings.HasPrefix(t.Notes, "http") {
-					_ = exec.Command("xdg-open", t.Notes).Start()
+				if url, _ := splitNote(t.Notes); url != "" {
+					_ = exec.Command("xdg-open", url).Start()
 					m.status = "↗ opened source in browser"
 				} else {
 					m.status = "this card has no link"
@@ -497,19 +647,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				if target := clampi(m.col+dir, len(m.cols)); target != m.col {
-					id, dest := strconv.Itoa(t.ID), m.cols[target].title
+					dest := m.cols[target].title
+					var err error
 					switch target { // columns are fixed in load(): 0 TODAY · 1 NEXT · 2 WAITING · 3 DONE
 					case 0:
-						run(id, "modify", "+now", "-waiting")
+						err = setTags(t.ID, []string{"now"}, []string{"waiting"})
 					case 1:
-						run(id, "modify", "-now", "-waiting")
+						err = setTags(t.ID, nil, []string{"now", "waiting"})
 					case 2:
-						run(id, "modify", "+waiting", "-now")
+						err = setTags(t.ID, []string{"waiting"}, []string{"now"})
 					case 3:
-						run(id, "done")
+						err = done(t.ID)
 					}
-					m = m.reloaded()
-					m.status = fmt.Sprintf("moved #%d → %s", t.ID, dest)
+					m = m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
 				}
 			}
 		}
@@ -593,8 +743,10 @@ func (m model) View() string {
 		foot = selStyle.Render("  add ▸ ") + m.input + "▌  " + helpStyle.Render("enter add · esc cancel")
 	case "filter":
 		foot = selStyle.Render("  filter ▸ ") + m.input + "▌  " + helpStyle.Render("enter apply · esc clear")
+	case "note":
+		foot = selStyle.Render("  note ▸ ") + m.input + "▌  " + helpStyle.Render("enter save · esc cancel")
 	default:
-		foot = helpStyle.Render("  a add · / filter · h/l/j/k move · H/L drag · ↵ work · o open · e card · d done · n today · s start/stop · I ingest · r reload · q quit")
+		foot = helpStyle.Render("  a add · N note · / filter · h/l/j/k move · H/L drag · ↵ work · o open · e card · d done · n today · s start/stop · I ingest · r reload · q quit")
 		if m.filter != "" {
 			foot = selStyle.Render("  ⦿ filter: "+m.filter) + "\n" + foot
 		}
