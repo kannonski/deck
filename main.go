@@ -1,12 +1,12 @@
-// dskan — a kanban TUI over the dstask task store. Fully standalone: it reads and
+// deck — a kanban TUI over the dstask task store. Fully standalone: it reads and
 // writes the store directly via the dstask library (github.com/naggie/dstask).
 // Columns: TODAY (+now) · NEXT (actionable pool, P3 noise hidden) · WAITING · DONE (today).
 // Built in: h/l/j/k move · H/L drag · o open · d done · n ±today · s start/stop ·
 // f focus (in-board pomodoro) · u undo · a capture · N note · / filter · r reload · q quit.
 // Optional external hooks, enabled only when the env var is set (else the key hides):
-//   DSKAN_OPEN_CMD <url>      → enter   ·  DSKAN_ENRICH_CMD <id> → e
-//   DSKAN_INGEST_CMD          → I       ·  DSKAN_CARD_DIR        → detail-pane card
-//   DSKAN_AGENT_CMD <id> <instr> → :    (act on the task: draft / comment, in the foreground)
+//   DECK_OPEN_CMD <url>      → enter   ·  DECK_ENRICH_CMD <id> → e
+//   DECK_INGEST_CMD          → I       ·  DECK_CARD_DIR        → detail-pane card
+//   DECK_AGENT_CMD <id> <instr> → :    (act on the task: draft / comment, in the foreground)
 // --once dumps the view to stdout and exits.
 package main
 
@@ -439,17 +439,17 @@ func appendNote(id int, line string) error {
 	})
 }
 
-// ── detail-pane cards: pre-generated "<ref>.md" files under DSKAN_CARD_DIR ──
+// ── detail-pane cards: pre-generated "<ref>.md" files under DECK_CARD_DIR ──
 var (
 	refRe    = regexp.MustCompile(`\[(gl[!#][0-9]+|mail:[^\]]+)\]$`)
 	nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 )
 
 // ── optional external integrations, wired via env so the core stays standalone ──
-//   DSKAN_OPEN_CMD   <url> → `enter`  (e.g. open a repo / workspace)
-//   DSKAN_ENRICH_CMD <id>  → `e`      (generate the detail card)
-//   DSKAN_INGEST_CMD       → `I`      (pull in new tasks)
-//   DSKAN_CARD_DIR         → folder of pre-generated "<ref>.md" detail cards
+//   DECK_OPEN_CMD   <url> → `enter`  (e.g. open a repo / workspace)
+//   DECK_ENRICH_CMD <id>  → `e`      (generate the detail card)
+//   DECK_INGEST_CMD       → `I`      (pull in new tasks)
+//   DECK_CARD_DIR         → folder of pre-generated "<ref>.md" detail cards
 func hookSet(env string) bool { return strings.TrimSpace(os.Getenv(env)) != "" }
 
 // hookCmd builds a command from an env var (space-split) plus extra args; nil if unset.
@@ -461,9 +461,9 @@ func hookCmd(env string, args ...string) *exec.Cmd {
 	return exec.Command(parts[0], append(parts[1:], args...)...)
 }
 
-// descPath maps a task's source ref to its card file under DSKAN_CARD_DIR ("" if unset).
+// descPath maps a task's source ref to its card file under DECK_CARD_DIR ("" if unset).
 func descPath(summary string) string {
-	dir := strings.TrimSpace(os.Getenv("DSKAN_CARD_DIR"))
+	dir := strings.TrimSpace(os.Getenv("DECK_CARD_DIR"))
 	if dir == "" {
 		return ""
 	}
@@ -477,12 +477,12 @@ func descPath(summary string) string {
 func cardText(t task) string {
 	f := descPath(t.Summary)
 	if f == "" {
-		return "" // card feature not configured (DSKAN_CARD_DIR unset)
+		return "" // card feature not configured (DECK_CARD_DIR unset)
 	}
 	if b, err := os.ReadFile(f); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		return strings.TrimRight(string(b), "\n")
 	}
-	if hookSet("DSKAN_ENRICH_CMD") {
+	if hookSet("DECK_ENRICH_CMD") {
 		return "⏳ no card yet — press e to generate"
 	}
 	return ""
@@ -577,14 +577,14 @@ func (m model) detailMaxOff() int {
 	return 0
 }
 
-// enrichedMsg arrives when an async DSKAN_ENRICH_CMD finishes.
+// enrichedMsg arrives when an async DECK_ENRICH_CMD finishes.
 type enrichedMsg struct {
 	id  int
 	err bool
 }
 
 func enrichCmd(id int) tea.Cmd {
-	c := hookCmd("DSKAN_ENRICH_CMD", strconv.Itoa(id))
+	c := hookCmd("DECK_ENRICH_CMD", strconv.Itoa(id))
 	if c == nil {
 		return nil
 	}
@@ -594,11 +594,11 @@ func enrichCmd(id int) tea.Cmd {
 // openedMsg arrives after `enter` finishes opening a workspace tab.
 type openedMsg struct{ err bool }
 
-// ingestedMsg arrives when a background DSKAN_INGEST_CMD (the `I` key) finishes.
+// ingestedMsg arrives when a background DECK_INGEST_CMD (the `I` key) finishes.
 type ingestedMsg struct{ err bool }
 
 func ingestCmd() tea.Cmd {
-	c := hookCmd("DSKAN_INGEST_CMD")
+	c := hookCmd("DECK_INGEST_CMD")
 	if c == nil {
 		return nil
 	}
@@ -624,7 +624,7 @@ type noteEditedMsg struct {
 
 // editNoteCmd opens the task's note in $EDITOR (temp file), then returns the result.
 func editNoteCmd(id int, current string) tea.Cmd {
-	f, err := os.CreateTemp("", "dskan-note-*.md")
+	f, err := os.CreateTemp("", "deck-note-*.md")
 	if err != nil {
 		return func() tea.Msg { return noteEditedMsg{id: id} }
 	}
@@ -654,14 +654,14 @@ func setNote(id int, content string) error {
 	return mutate(id, "Note on", func(t *dstask.Task) { t.Notes = content })
 }
 
-// agentDoneMsg arrives after the `:` agent (DSKAN_AGENT_CMD) finishes.
+// agentDoneMsg arrives after the `:` agent (DECK_AGENT_CMD) finishes.
 type agentDoneMsg struct{ err bool }
 
-// agentCmd hands the task id + instruction to DSKAN_AGENT_CMD in the FOREGROUND
+// agentCmd hands the task id + instruction to DECK_AGENT_CMD in the FOREGROUND
 // (suspends the TUI, like enter) so it can read the source, draft, and — for GitLab —
 // show the draft and prompt to post, all on the terminal. Returns nil if unset.
 func agentCmd(id int, instruction string) tea.Cmd {
-	c := hookCmd("DSKAN_AGENT_CMD", strconv.Itoa(id), instruction)
+	c := hookCmd("DECK_AGENT_CMD", strconv.Itoa(id), instruction)
 	if c == nil {
 		return nil
 	}
@@ -716,7 +716,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusing, m.focusGen = false, m.focusGen+1
 			_ = stopTask(id)
 			m = m.reloaded()
-			_ = exec.Command("notify-send", "dskan", fmt.Sprintf("focus block done on #%d", id)).Start()
+			_ = exec.Command("notify-send", "deck", fmt.Sprintf("focus block done on #%d", id)).Start()
 			m.status = fmt.Sprintf("⏰ focus done on #%d — another round? f", id)
 			return m, nil
 		}
@@ -793,7 +793,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "↻ reloaded"
 		case "u": // undo the last change (revert the last commit)
 			m = m.act(undoLast(), "↩ undid the last change")
-		case "I": // background ingest via DSKAN_INGEST_CMD; auto-reloads when done
+		case "I": // background ingest via DECK_INGEST_CMD; auto-reloads when done
 			if m.ingesting {
 				m.status = "📥 already ingesting…"
 			} else if c := ingestCmd(); c != nil {
@@ -801,7 +801,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "📥 ingesting… (board stays usable; refreshes when done)"
 				return m, c
 			} else {
-				m.status = "set DSKAN_INGEST_CMD to enable I"
+				m.status = "set DECK_INGEST_CMD to enable I"
 			}
 		case "left", "h":
 			m.col = clampi(m.col-1, len(m.cols))
@@ -845,22 +845,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case ":": // ask the agent to act on the selected card (draft reply, comment, summarise…)
 			if t, ok := m.selected(); ok && t.ID > 0 {
-				if hookSet("DSKAN_AGENT_CMD") {
+				if hookSet("DECK_AGENT_CMD") {
 					m.mode, m.input = "agent", ""
 				} else {
-					m.status = "set DSKAN_AGENT_CMD to enable the agent"
+					m.status = "set DECK_AGENT_CMD to enable the agent"
 				}
 			}
 
 		// ── actions on the selected card (open tasks only; DONE cards have no id) ──
-		case "enter": // work on it: hand off to DSKAN_OPEN_CMD (suspends so it can run a picker)
+		case "enter": // work on it: hand off to DECK_OPEN_CMD (suspends so it can run a picker)
 			if t, ok := m.selected(); ok {
 				url, _ := splitNote(t.Notes)
-				if c := hookCmd("DSKAN_OPEN_CMD", url); c != nil {
+				if c := hookCmd("DECK_OPEN_CMD", url); c != nil {
 					m.status = "opening workspace…"
 					return m, tea.ExecProcess(c, func(err error) tea.Msg { return openedMsg{err != nil} })
 				}
-				m.status = "set DSKAN_OPEN_CMD to enable enter"
+				m.status = "set DECK_OPEN_CMD to enable enter"
 			}
 		case "d": // resolve
 			if t, ok := m.selected(); ok && t.ID > 0 {
@@ -874,13 +874,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.act(setTags(t.ID, []string{"now"}, nil), fmt.Sprintf("→ #%d to today", t.ID))
 				}
 			}
-		case "e": // generate the detail card via DSKAN_ENRICH_CMD (async)
+		case "e": // generate the detail card via DECK_ENRICH_CMD (async)
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				if c := enrichCmd(t.ID); c != nil {
 					m.status = fmt.Sprintf("describing #%d…", t.ID)
 					return m, c
 				}
-				m.status = "set DSKAN_ENRICH_CMD to enable e"
+				m.status = "set DECK_ENRICH_CMD to enable e"
 			}
 		case "s": // start ↔ stop (activate ↔ deactivate)
 			if t, ok := m.selected(); ok && t.ID > 0 {
@@ -1024,17 +1024,17 @@ func (m model) View() string {
 		foot = selStyle.Render("  agent ▸ ") + m.input + "▌  " + helpStyle.Render("enter run · esc cancel")
 	default:
 		hints := []string{"h/l/j/k move", "H/L drag"}
-		if hookSet("DSKAN_OPEN_CMD") {
+		if hookSet("DECK_OPEN_CMD") {
 			hints = append(hints, "↵ work")
 		}
 		hints = append(hints, "a add", "N note", "E edit", "/ filter", "o open", "f focus", "d done", "n today", "s start/stop", "u undo")
-		if hookSet("DSKAN_AGENT_CMD") {
+		if hookSet("DECK_AGENT_CMD") {
 			hints = append(hints, ": agent")
 		}
-		if hookSet("DSKAN_ENRICH_CMD") {
+		if hookSet("DECK_ENRICH_CMD") {
 			hints = append(hints, "e card")
 		}
-		if hookSet("DSKAN_INGEST_CMD") {
+		if hookSet("DECK_INGEST_CMD") {
 			hints = append(hints, "I ingest")
 		}
 		hints = append(hints, "r reload", "q quit")
