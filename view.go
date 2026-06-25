@@ -242,5 +242,11 @@ func (m model) View() string {
 		}
 		foot = stats + "\n" + foot
 	}
-	return board + "\n" + m.detailView() + "\n" + foot
+	out := board + "\n" + m.detailView() + "\n" + foot
+	if m.h > 0 { // never emit more lines than the terminal — alt-screen garbles on overflow
+		if lines := strings.Split(out, "\n"); len(lines) > m.h {
+			out = strings.Join(lines[:m.h], "\n")
+		}
+	}
+	return out
 }

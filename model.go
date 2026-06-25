@@ -67,7 +67,7 @@ func (m model) layout() (colH, detailH, vis int) {
 	if h <= 0 {
 		h = 40
 	}
-	const footer = 4                  // stats line + help + up to two of filter/ingesting/status
+	const footer = 5                  // stats + help + up to three of focus/filter/ingesting/status
 	detail := max(h*2/5, 10)          // a big detail pane: ~40% of the screen, ≥10 rows
 	detail = min(detail, h-footer-10) // always leave ≥10 rows for the board
 	detail = max(detail, 5)
@@ -126,7 +126,11 @@ func (m model) reloaded() model {
 // act reloads + reports success, or surfaces the error in the status line.
 func (m model) act(err error, ok string) model {
 	if err != nil {
-		m.status = "⚠ " + err.Error()
+		e := err.Error()
+		if i := strings.IndexByte(e, '\n'); i >= 0 {
+			e = e[:i] // keep the status to a single line so the footer can't overflow
+		}
+		m.status = "⚠ " + trunc(e, 80)
 		return m
 	}
 	m = m.reloaded()
