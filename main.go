@@ -1,11 +1,12 @@
 // dskan — a kanban TUI over the dstask task store. Fully standalone: it reads and
 // writes the store directly via the dstask library (github.com/naggie/dstask).
 // Columns: TODAY (+now) · NEXT (actionable pool, P3 noise hidden) · WAITING · DONE (today).
-// Built in: h/l/j/k move · H/L drag · o open link · d done · n ±today · s start/stop ·
-// a capture · N note · / filter · r reload · q quit.
+// Built in: h/l/j/k move · H/L drag · o open · d done · n ±today · s start/stop ·
+// f focus (in-board pomodoro) · u undo · a capture · N note · / filter · r reload · q quit.
 // Optional external hooks, enabled only when the env var is set (else the key hides):
-//   DSKAN_OPEN_CMD <url>  → enter   ·  DSKAN_ENRICH_CMD <id> → e
-//   DSKAN_INGEST_CMD      → I       ·  DSKAN_CARD_DIR        → detail-pane card
+//   DSKAN_OPEN_CMD <url>      → enter   ·  DSKAN_ENRICH_CMD <id> → e
+//   DSKAN_INGEST_CMD          → I       ·  DSKAN_CARD_DIR        → detail-pane card
+//   DSKAN_AGENT_CMD <id> <instr> → :    (act on the task: draft / comment, in the foreground)
 // --once dumps the view to stdout and exits.
 package main
 
@@ -87,19 +88,23 @@ func emptyCols() []column {
 	}
 }
 
-func load() []column {
+func load() ([]column, int) {
 	conf := dstask.NewConfig()
 	ts, err := dstask.LoadTaskSet(conf.Repo, conf.IDsFile, true) // include resolved for the DONE column
 	if err != nil {
-		return emptyCols()
+		return emptyCols(), 0
 	}
 	today := time.Now().Format("2006-01-02")
 
 	var now, next, waiting, done []task
+	resolvedDays := map[string]bool{}
 	for _, dt := range ts.AllTasks() {
 		t := toTask(dt)
 		switch dt.Status {
 		case dstask.STATUS_RESOLVED:
+			if t.Resolved != "" {
+				resolvedDays[t.Resolved] = true
+			}
 			if strings.HasPrefix(t.Resolved, today) {
 				done = append(done, t)
 			}
@@ -119,7 +124,25 @@ func load() []column {
 
 	cols := emptyCols()
 	cols[0].cards, cols[1].cards, cols[2].cards, cols[3].cards = now, next, waiting, done
-	return cols
+	return cols, streakFrom(resolvedDays)
+}
+
+// streakFrom counts consecutive days (through today, or yesterday if nothing yet
+// today) that have at least one resolved task.
+func streakFrom(days map[string]bool) int {
+	if len(days) == 0 {
+		return 0
+	}
+	d := time.Now()
+	if !days[d.Format("2006-01-02")] {
+		d = d.AddDate(0, 0, -1) // nothing closed today yet is fine — no broken streak
+	}
+	n := 0
+	for days[d.Format("2006-01-02")] {
+		n++
+		d = d.AddDate(0, 0, -1)
+	}
+	return n
 }
 
 func areaColor(p string) lipgloss.Color {
@@ -161,11 +184,17 @@ type model struct {
 	w, h      int
 	col, card int    // cursor: column index + card index
 	off       []int  // per-column scroll offset (top visible card)
+	detailOff int    // scroll offset within the detail pane (J/K)
 	mode      string // "" nav · "add" capture · "filter"
 	input     string // text buffer while in add/filter mode
 	filter    string // active filter (area/state/summary substring); "" = all
-	ingesting bool   // a background `I` ingest is in flight
-	status    string // last-action feedback, shown in the footer
+	ingesting bool      // a background `I` ingest is in flight
+	streak    int       // consecutive days with a resolved task (computed on load)
+	focusing  bool      // a focus countdown is running
+	focusID   int       // the task being focused
+	focusEnds time.Time // when the current focus block ends
+	focusGen  int       // bumped on (re)start/stop to invalidate stale ticks
+	status    string    // last-action feedback, shown in the footer
 }
 
 // clampi keeps v inside [0, n-1]; returns 0 when the column is empty.
@@ -203,22 +232,46 @@ func (m model) shown(ci int) []task {
 // visN = navigable cards in the current column (after filtering).
 func (m model) visN() int { return len(m.shown(m.col)) }
 
-// visible = cards that fit in one column for the current terminal height
-// (each card is 2 lines; leave room for the detail pane, footer and box chrome).
-func (m model) visible() int {
+// layout splits the terminal height into FIXED column + detail-pane content heights
+// (the border adds 2 to each box) plus cards-per-column. Fixed sizes mean the total
+// height is constant as you navigate — the detail pane never grows into the columns,
+// so there's no jump/flicker. Returns content heights and the visible card count.
+func (m model) layout() (colH, detailH, vis int) {
 	h := m.h
 	if h <= 0 {
 		h = 40
 	}
-	v := (h - 16) / 2
-	if v < 4 {
-		v = 4
+	const footer = 4 // stats line + help + up to two of filter/ingesting/status
+	detail := h * 2 / 5 // a big detail pane: ~40% of the screen
+	if detail < 10 {
+		detail = 10
 	}
-	return v
+	if mx := h - footer - 10; detail > mx { // always leave ≥10 rows for the board
+		detail = mx
+	}
+	if detail < 5 {
+		detail = 5
+	}
+	colH = (h - footer - detail) - 2 // -2 for the column box border
+	detailH = detail - 2             // -2 for the detail box border
+	if colH < 5 {
+		colH = 5
+	}
+	if detailH < 3 {
+		detailH = 3
+	}
+	vis = (colH - 4) / 2 // title + blank + two ↑/↓ indicator lines
+	if vis < 3 {
+		vis = 3
+	}
+	return
 }
+
+func (m model) visible() int { _, _, v := m.layout(); return v }
 
 // scrolled keeps the cursor inside the visible window of its column.
 func (m model) scrolled() model {
+	m.detailOff = 0 // a selection change (or reload) resets detail-pane scroll
 	if m.col < 0 || m.col >= len(m.off) {
 		return m
 	}
@@ -246,7 +299,7 @@ func (m model) selected() (task, bool) {
 
 // reloaded re-reads dstask and clamps the cursor + offsets back into range.
 func (m model) reloaded() model {
-	m.cols = load()
+	m.cols, m.streak = load()
 	if len(m.off) != len(m.cols) {
 		m.off = make([]int, len(m.cols))
 	}
@@ -341,6 +394,12 @@ func addTask(text string) error {
 	return dstask.GitCommit(c.Repo, "Added %s", t)
 }
 
+// undoLast reverts the most recent change — every mutation is its own git commit.
+func undoLast() error {
+	c := dstask.NewConfig()
+	return dstask.RunGitCmd(c.Repo, "revert", "--no-edit", "HEAD")
+}
+
 // act reloads + reports success, or surfaces the error in the status line.
 func (m model) act(err error, ok string) model {
 	if err != nil {
@@ -424,46 +483,98 @@ func cardText(t task) string {
 		return strings.TrimRight(string(b), "\n")
 	}
 	if hookSet("DSKAN_ENRICH_CMD") {
-		return dimStyle.Render("⏳ no card yet — press e to generate")
+		return "⏳ no card yet — press e to generate"
 	}
 	return ""
 }
 
-// detailView is the bottom pane: the selected task's heading, meta, link and card.
-func (m model) detailView() string {
-	dw := 76
-	if m.w > 6 {
-		dw = m.w - 4
-	}
-	box := lipgloss.NewStyle().Width(dw).Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).Padding(0, 1)
+// detailLines builds the (already styled, width-truncated so nothing wraps) content
+// lines of the detail pane for the selected task.
+func (m model) detailLines(iw int) []string {
 	t, ok := m.selected()
 	if !ok {
-		return box.Render(dimStyle.Render("no card selected"))
+		return []string{dimStyle.Render("no card selected")}
 	}
 	meta := fmt.Sprintf("#%d · %s", t.ID, t.Project)
 	if s := t.state(); s != "" {
 		meta += " · " + s
 	}
-	if t.Status == "active" {
+	if t.Status == dstask.STATUS_ACTIVE {
 		meta += " · ▶ active"
 	}
-	if !strings.HasPrefix(t.Due, "0001") && t.Due != "" {
-		meta += " · due " + t.Due[:10]
+	if t.Due != "" {
+		meta += " · due " + t.Due
 	}
-	body := lipgloss.NewStyle().Foreground(areaColor(t.Project)).Bold(true).Render(trunc(t.Summary, dw-2)) +
-		"\n" + dimStyle.Render(meta)
+	lines := []string{
+		lipgloss.NewStyle().Foreground(areaColor(t.Project)).Bold(true).Render(trunc(t.Summary, iw)),
+		dimStyle.Render(trunc(meta, iw)),
+	}
 	url, notes := splitNote(t.Notes)
 	if url != "" {
-		body += "\n" + dimStyle.Render("↗ "+trunc(url, dw-2))
+		lines = append(lines, dimStyle.Render(trunc("↗ "+url, iw)))
 	}
 	if notes != "" {
-		body += "\n\n" + selStyle.Render(fmt.Sprintf("📝 notes (%d)", strings.Count(notes, "\n")+1)) + "\n" + notes
+		lines = append(lines, "", selStyle.Render(fmt.Sprintf("📝 notes (%d)", strings.Count(notes, "\n")+1)))
+		for _, n := range strings.Split(notes, "\n") {
+			lines = append(lines, trunc(n, iw))
+		}
 	}
 	if card := cardText(t); card != "" {
-		body += "\n\n" + card
+		lines = append(lines, "")
+		for _, c := range strings.Split(card, "\n") {
+			lines = append(lines, dimStyle.Render(trunc(c, iw)))
+		}
 	}
-	return box.Render(body)
+	return lines
+}
+
+func detailInnerWidth(w int) int {
+	iw := 74
+	if w > 6 {
+		iw = w - 6
+	}
+	if iw < 10 {
+		iw = 10
+	}
+	return iw
+}
+
+// detailView is the bottom pane, rendered at a FIXED height (no flicker on navigate),
+// windowed by m.detailOff so long notes/cards can be scrolled with J/K.
+func (m model) detailView() string {
+	_, detailH, _ := m.layout()
+	dw := 76
+	if m.w > 6 {
+		dw = m.w - 4
+	}
+	box := lipgloss.NewStyle().Width(dw).Height(detailH).
+		Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
+	lines := m.detailLines(detailInnerWidth(m.w))
+	off := m.detailOff
+	if mx := len(lines) - detailH; off > mx {
+		off = mx
+	}
+	if off < 0 {
+		off = 0
+	}
+	view := lines[off:]
+	if len(view) > detailH {
+		view = view[:detailH]
+		view[detailH-1] = dimStyle.Render("  ↓ more (J)")
+	}
+	if off > 0 {
+		view[0] = dimStyle.Render("  ↑ more (K)")
+	}
+	return box.Render(strings.Join(view, "\n"))
+}
+
+// detailMaxOff is the furthest the detail pane can scroll for the current selection.
+func (m model) detailMaxOff() int {
+	_, detailH, _ := m.layout()
+	if mx := len(m.detailLines(detailInnerWidth(m.w))) - detailH; mx > 0 {
+		return mx
+	}
+	return 0
 }
 
 // enrichedMsg arrives when an async DSKAN_ENRICH_CMD finishes.
@@ -494,6 +605,69 @@ func ingestCmd() tea.Cmd {
 	return func() tea.Msg { return ingestedMsg{c.Run() != nil} }
 }
 
+// tickMsg drives the focus countdown; gen lets stale ticks (from an old/ended focus
+// session) be ignored, so restarting focus never double-speeds the clock.
+type tickMsg struct{ gen int }
+
+func tickCmd(gen int) tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{gen} })
+}
+
+const focusMinutes = 25
+
+// noteEditedMsg carries the edited note text back from $EDITOR.
+type noteEditedMsg struct {
+	id  int
+	val string
+	ok  bool
+}
+
+// editNoteCmd opens the task's note in $EDITOR (temp file), then returns the result.
+func editNoteCmd(id int, current string) tea.Cmd {
+	f, err := os.CreateTemp("", "dskan-note-*.md")
+	if err != nil {
+		return func() tea.Msg { return noteEditedMsg{id: id} }
+	}
+	name := f.Name()
+	_, _ = f.WriteString(current)
+	_ = f.Close()
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vi"
+	}
+	parts := strings.Fields(editor)
+	c := exec.Command(parts[0], append(parts[1:], name)...)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		b, rerr := os.ReadFile(name)
+		_ = os.Remove(name)
+		if err != nil || rerr != nil {
+			return noteEditedMsg{id: id}
+		}
+		return noteEditedMsg{id: id, val: strings.TrimRight(string(b), "\n"), ok: true}
+	})
+}
+
+func setNote(id int, content string) error {
+	return mutate(id, "Note on", func(t *dstask.Task) { t.Notes = content })
+}
+
+// agentDoneMsg arrives after the `:` agent (DSKAN_AGENT_CMD) finishes.
+type agentDoneMsg struct{ err bool }
+
+// agentCmd hands the task id + instruction to DSKAN_AGENT_CMD in the FOREGROUND
+// (suspends the TUI, like enter) so it can read the source, draft, and — for GitLab —
+// show the draft and prompt to post, all on the terminal. Returns nil if unset.
+func agentCmd(id int, instruction string) tea.Cmd {
+	c := hookCmd("DSKAN_AGENT_CMD", strconv.Itoa(id), instruction)
+	if c == nil {
+		return nil
+	}
+	return tea.ExecProcess(c, func(err error) tea.Msg { return agentDoneMsg{err != nil} })
+}
+
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -514,6 +688,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "↗ opened workspace"
 		}
+	case noteEditedMsg:
+		if msg.ok {
+			m = m.act(setNote(msg.id, msg.val), fmt.Sprintf("📝 note saved on #%d", msg.id))
+		}
+	case agentDoneMsg:
+		m = m.reloaded()
+		if msg.err {
+			m.status = "⚠ agent failed"
+		} else {
+			m.status = "🤖 agent done — see the card"
+		}
 	case ingestedMsg:
 		m.ingesting = false
 		m = m.reloaded()
@@ -522,6 +707,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "✓ ingest done — board refreshed"
 		}
+	case tickMsg:
+		if !m.focusing || msg.gen != m.focusGen {
+			return m, nil // stale tick from an ended/restarted focus session
+		}
+		if !time.Now().Before(m.focusEnds) {
+			id := m.focusID
+			m.focusing, m.focusGen = false, m.focusGen+1
+			_ = stopTask(id)
+			m = m.reloaded()
+			_ = exec.Command("notify-send", "dskan", fmt.Sprintf("focus block done on #%d", id)).Start()
+			m.status = fmt.Sprintf("⏰ focus done on #%d — another round? f", id)
+			return m, nil
+		}
+		return m, tickCmd(m.focusGen)
 	case tea.KeyMsg:
 		if m.mode != "" { // capture / filter input mode swallows keystrokes
 			switch msg.Type {
@@ -553,6 +752,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.mode, m.input = "", ""
 					}
+				case "agent":
+					if t, ok := m.selected(); ok && t.ID > 0 && strings.TrimSpace(m.input) != "" {
+						instr := m.input
+						m.mode, m.input = "", ""
+						m.status = "🤖 working…"
+						return m, agentCmd(t.ID, instr)
+					}
+					m.mode, m.input = "", ""
 				default: // filter
 					m.filter = m.input
 					m.mode, m.input = "", ""
@@ -584,6 +791,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m = m.reloaded()
 			m.status = "↻ reloaded"
+		case "u": // undo the last change (revert the last commit)
+			m = m.act(undoLast(), "↩ undid the last change")
 		case "I": // background ingest via DSKAN_INGEST_CMD; auto-reloads when done
 			if m.ingesting {
 				m.status = "📥 already ingesting…"
@@ -608,6 +817,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.card = clampi(m.card+1, m.visN())
 			m = m.scrolled()
+		case "K": // scroll the detail pane up
+			if m.detailOff > 0 {
+				m.detailOff--
+			}
+		case "J": // scroll the detail pane down
+			if m.detailOff < m.detailMaxOff() {
+				m.detailOff++
+			}
 		case "g", "home":
 			m.card = 0
 			m = m.scrolled()
@@ -621,6 +838,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "N": // jot a note on the selected card
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				m.mode, m.input = "note", ""
+			}
+		case "E": // edit the selected card's full note in $EDITOR
+			if t, ok := m.selected(); ok && t.ID > 0 {
+				return m, editNoteCmd(t.ID, t.Notes)
+			}
+		case ":": // ask the agent to act on the selected card (draft reply, comment, summarise…)
+			if t, ok := m.selected(); ok && t.ID > 0 {
+				if hookSet("DSKAN_AGENT_CMD") {
+					m.mode, m.input = "agent", ""
+				} else {
+					m.status = "set DSKAN_AGENT_CMD to enable the agent"
+				}
 			}
 
 		// ── actions on the selected card (open tasks only; DONE cards have no id) ──
@@ -659,6 +888,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.act(stopTask(t.ID), fmt.Sprintf("■ stopped #%d", t.ID))
 				} else {
 					m = m.act(startTask(t.ID), fmt.Sprintf("▶ started #%d", t.ID))
+				}
+			}
+		case "f": // focus: a 25-min pomodoro on the selected card, with an in-board countdown
+			if t, ok := m.selected(); ok && t.ID > 0 {
+				if m.focusing && m.focusID == t.ID { // toggle off
+					m.focusing, m.focusGen = false, m.focusGen+1
+					m = m.act(stopTask(t.ID), fmt.Sprintf("■ focus ended on #%d", t.ID))
+				} else {
+					m.focusID, m.focusEnds, m.focusing = t.ID, time.Now().Add(focusMinutes*time.Minute), true
+					m.focusGen++
+					gen := m.focusGen
+					m = m.act(startTask(t.ID), fmt.Sprintf("⏳ focus #%d · %02d:00", t.ID, focusMinutes))
+					return m, tickCmd(gen)
 				}
 			}
 		case "o": // open the source (issue/MR/mail) in the browser
@@ -706,7 +948,7 @@ func (m model) View() string {
 			cw = 16
 		}
 	}
-	vis := m.visible()
+	colH, _, vis := m.layout()
 	boxes := make([]string, 0, n)
 	for ci, c := range m.cols {
 		active := ci == m.col
@@ -757,12 +999,15 @@ func (m model) View() string {
 		if end < len(cards) {
 			lines = append(lines, dimStyle.Render(fmt.Sprintf("  ↓ %d more", len(cards)-end)))
 		}
+		if len(lines) > colH { // safety: never exceed the fixed column height
+			lines = lines[:colH]
+		}
 		border := c.accent
 		if !active {
 			border = lipgloss.Color("238")
 		}
 		box := lipgloss.NewStyle().
-			Width(cw).Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1).
+			Width(cw).Height(colH).Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1).
 			Render(strings.Join(lines, "\n"))
 		boxes = append(boxes, box)
 	}
@@ -775,12 +1020,17 @@ func (m model) View() string {
 		foot = selStyle.Render("  filter ▸ ") + m.input + "▌  " + helpStyle.Render("enter apply · esc clear")
 	case "note":
 		foot = selStyle.Render("  note ▸ ") + m.input + "▌  " + helpStyle.Render("enter save · esc cancel")
+	case "agent":
+		foot = selStyle.Render("  agent ▸ ") + m.input + "▌  " + helpStyle.Render("enter run · esc cancel")
 	default:
 		hints := []string{"h/l/j/k move", "H/L drag"}
 		if hookSet("DSKAN_OPEN_CMD") {
 			hints = append(hints, "↵ work")
 		}
-		hints = append(hints, "a add", "N note", "/ filter", "o open", "d done", "n today", "s start/stop")
+		hints = append(hints, "a add", "N note", "E edit", "/ filter", "o open", "f focus", "d done", "n today", "s start/stop", "u undo")
+		if hookSet("DSKAN_AGENT_CMD") {
+			hints = append(hints, ": agent")
+		}
 		if hookSet("DSKAN_ENRICH_CMD") {
 			hints = append(hints, "e card")
 		}
@@ -798,6 +1048,24 @@ func (m model) View() string {
 		if m.status != "" {
 			foot += "\n  " + selStyle.Render(m.status)
 		}
+		if m.focusing {
+			rem := time.Until(m.focusEnds)
+			if rem < 0 {
+				rem = 0
+			}
+			foot = lipgloss.NewStyle().Foreground(lipgloss.Color("213")).
+				Render(fmt.Sprintf("  ⏳ focus #%d · %02d:%02d", m.focusID, int(rem.Minutes()), int(rem.Seconds())%60)) + "\n" + foot
+		}
+		// dopamine line on top: what you've closed + the streak
+		done := 0
+		if len(m.cols) > 3 {
+			done = len(m.cols[3].cards)
+		}
+		stats := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Render(fmt.Sprintf("  ✓ %d today", done))
+		if m.streak > 0 {
+			stats += lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(fmt.Sprintf("  ·  🔥 %d", m.streak))
+		}
+		foot = stats + "\n" + foot
 	}
 	return board + "\n" + m.detailView() + "\n" + foot
 }
@@ -806,8 +1074,8 @@ func main() {
 	once := flag.Bool("once", false, "render the kanban once to stdout and exit")
 	flag.Parse()
 
-	c := load()
-	m := model{cols: c, off: make([]int, len(c))}
+	c, s := load()
+	m := model{cols: c, streak: s, off: make([]int, len(c))}
 	if *once {
 		fmt.Println(m.View())
 		return
