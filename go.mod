@@ -1,4 +1,4 @@
-module taskkan
+module dskan
 
 go 1.26.4
 

@@ -1,10 +1,12 @@
-// taskkan — a kanban TUI over the dstask task store.
+// dskan — a kanban TUI over the dstask task store. Fully standalone: it reads and
+// writes the store directly via the dstask library (github.com/naggie/dstask).
 // Columns: TODAY (+now) · NEXT (actionable pool, P3 noise hidden) · WAITING · DONE (today).
-// Navigate h/l/j/k, drag cards H/L, act on the selected card (enter = clone+open a
-// kitty layout to work on it · o open in browser · d done · n ±today · s start/stop ·
-// e describe), capture with `a`, jot notes with `N`, filter with `/`.
-// A bottom pane shows the task's source link, its notes, and the cached card.
-// Reads/writes the dstask store directly via the dstask library. --once dumps + exits.
+// Built in: h/l/j/k move · H/L drag · o open link · d done · n ±today · s start/stop ·
+// a capture · N note · / filter · r reload · q quit.
+// Optional external hooks, enabled only when the env var is set (else the key hides):
+//   DSKAN_OPEN_CMD <url>  → enter   ·  DSKAN_ENRICH_CMD <id> → e
+//   DSKAN_INGEST_CMD      → I       ·  DSKAN_CARD_DIR        → detail-pane card
+// --once dumps the view to stdout and exits.
 package main
 
 import (
@@ -378,35 +380,53 @@ func appendNote(id int, line string) error {
 	})
 }
 
-// ── task cards: the cached "what · status · done =" taskflow generates per source ──
+// ── detail-pane cards: pre-generated "<ref>.md" files under DSKAN_CARD_DIR ──
 var (
 	refRe    = regexp.MustCompile(`\[(gl[!#][0-9]+|mail:[^\]]+)\]$`)
 	nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 )
 
-func descDir() string {
-	if c := os.Getenv("XDG_CACHE_HOME"); c != "" {
-		return c + "/taskflow/desc"
+// ── optional external integrations, wired via env so the core stays standalone ──
+//   DSKAN_OPEN_CMD   <url> → `enter`  (e.g. open a repo / workspace)
+//   DSKAN_ENRICH_CMD <id>  → `e`      (generate the detail card)
+//   DSKAN_INGEST_CMD       → `I`      (pull in new tasks)
+//   DSKAN_CARD_DIR         → folder of pre-generated "<ref>.md" detail cards
+func hookSet(env string) bool { return strings.TrimSpace(os.Getenv(env)) != "" }
+
+// hookCmd builds a command from an env var (space-split) plus extra args; nil if unset.
+func hookCmd(env string, args ...string) *exec.Cmd {
+	parts := strings.Fields(os.Getenv(env))
+	if len(parts) == 0 {
+		return nil
 	}
-	return os.Getenv("HOME") + "/.cache/taskflow/desc"
+	return exec.Command(parts[0], append(parts[1:], args...)...)
 }
 
-// descPath mirrors taskflow's _desc_file: trailing [gl!N]/[gl#N]/[mail:…] → cache file.
+// descPath maps a task's source ref to its card file under DSKAN_CARD_DIR ("" if unset).
 func descPath(summary string) string {
+	dir := strings.TrimSpace(os.Getenv("DSKAN_CARD_DIR"))
+	if dir == "" {
+		return ""
+	}
 	mm := refRe.FindStringSubmatch(strings.TrimSpace(summary))
 	if mm == nil {
 		return ""
 	}
-	return descDir() + "/" + nonAlnum.ReplaceAllString(mm[1], "_") + ".md"
+	return dir + "/" + nonAlnum.ReplaceAllString(mm[1], "_") + ".md"
 }
 
 func cardText(t task) string {
-	if f := descPath(t.Summary); f != "" {
-		if b, err := os.ReadFile(f); err == nil && len(strings.TrimSpace(string(b))) > 0 {
-			return strings.TrimRight(string(b), "\n")
-		}
+	f := descPath(t.Summary)
+	if f == "" {
+		return "" // card feature not configured (DSKAN_CARD_DIR unset)
 	}
-	return dimStyle.Render("⏳ no card yet — press e to generate (≈15s)")
+	if b, err := os.ReadFile(f); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+		return strings.TrimRight(string(b), "\n")
+	}
+	if hookSet("DSKAN_ENRICH_CMD") {
+		return dimStyle.Render("⏳ no card yet — press e to generate")
+	}
+	return ""
 }
 
 // detailView is the bottom pane: the selected task's heading, meta, link and card.
@@ -440,35 +460,38 @@ func (m model) detailView() string {
 	if notes != "" {
 		body += "\n\n" + selStyle.Render(fmt.Sprintf("📝 notes (%d)", strings.Count(notes, "\n")+1)) + "\n" + notes
 	}
-	return box.Render(body + "\n\n" + cardText(t))
+	if card := cardText(t); card != "" {
+		body += "\n\n" + card
+	}
+	return box.Render(body)
 }
 
-// enrichedMsg arrives when an async `taskflow enrich` finishes.
+// enrichedMsg arrives when an async DSKAN_ENRICH_CMD finishes.
 type enrichedMsg struct {
 	id  int
 	err bool
 }
 
 func enrichCmd(id int) tea.Cmd {
-	return func() tea.Msg {
-		err := exec.Command(os.Getenv("HOME")+"/.config/task/taskflow", "enrich", strconv.Itoa(id)).Run()
-		return enrichedMsg{id: id, err: err != nil}
+	c := hookCmd("DSKAN_ENRICH_CMD", strconv.Itoa(id))
+	if c == nil {
+		return nil
 	}
+	return func() tea.Msg { return enrichedMsg{id: id, err: c.Run() != nil} }
 }
 
 // openedMsg arrives after `enter` finishes opening a workspace tab.
 type openedMsg struct{ err bool }
 
-// ingestedMsg arrives when a background `taskflow ingest` (the `I` key) finishes.
+// ingestedMsg arrives when a background DSKAN_INGEST_CMD (the `I` key) finishes.
 type ingestedMsg struct{ err bool }
 
-func taskflowBin() string { return os.Getenv("HOME") + "/.config/task/taskflow" }
-
 func ingestCmd() tea.Cmd {
-	return func() tea.Msg {
-		err := exec.Command(taskflowBin(), "ingest").Run()
-		return ingestedMsg{err != nil}
+	c := hookCmd("DSKAN_INGEST_CMD")
+	if c == nil {
+		return nil
 	}
+	return func() tea.Msg { return ingestedMsg{c.Run() != nil} }
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -561,13 +584,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m = m.reloaded()
 			m.status = "↻ reloaded"
-		case "I": // background ingest (mail + GitLab), like `ti`; auto-reloads when done
+		case "I": // background ingest via DSKAN_INGEST_CMD; auto-reloads when done
 			if m.ingesting {
 				m.status = "📥 already ingesting…"
-			} else {
+			} else if c := ingestCmd(); c != nil {
 				m.ingesting = true
-				m.status = "📥 ingesting mail + GitLab… (board stays usable; refreshes when done)"
-				return m, ingestCmd()
+				m.status = "📥 ingesting… (board stays usable; refreshes when done)"
+				return m, c
+			} else {
+				m.status = "set DSKAN_INGEST_CMD to enable I"
 			}
 		case "left", "h":
 			m.col = clampi(m.col-1, len(m.cols))
@@ -599,12 +624,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		// ── actions on the selected card (open tasks only; DONE cards have no id) ──
-		case "enter": // work on it: clone + open a kitty layout tab (suspends to run the layout picker)
+		case "enter": // work on it: hand off to DSKAN_OPEN_CMD (suspends so it can run a picker)
 			if t, ok := m.selected(); ok {
 				url, _ := splitNote(t.Notes)
-				c := exec.Command(taskflowBin(), "open", url)
-				m.status = "opening workspace…"
-				return m, tea.ExecProcess(c, func(err error) tea.Msg { return openedMsg{err != nil} })
+				if c := hookCmd("DSKAN_OPEN_CMD", url); c != nil {
+					m.status = "opening workspace…"
+					return m, tea.ExecProcess(c, func(err error) tea.Msg { return openedMsg{err != nil} })
+				}
+				m.status = "set DSKAN_OPEN_CMD to enable enter"
 			}
 		case "d": // resolve
 			if t, ok := m.selected(); ok && t.ID > 0 {
@@ -618,10 +645,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.act(setTags(t.ID, []string{"now"}, nil), fmt.Sprintf("→ #%d to today", t.ID))
 				}
 			}
-		case "e": // generate the card for the selected task (async, ~15s)
+		case "e": // generate the detail card via DSKAN_ENRICH_CMD (async)
 			if t, ok := m.selected(); ok && t.ID > 0 {
-				m.status = fmt.Sprintf("describing #%d (~15s)", t.ID)
-				return m, enrichCmd(t.ID)
+				if c := enrichCmd(t.ID); c != nil {
+					m.status = fmt.Sprintf("describing #%d…", t.ID)
+					return m, c
+				}
+				m.status = "set DSKAN_ENRICH_CMD to enable e"
 			}
 		case "s": // start ↔ stop (activate ↔ deactivate)
 			if t, ok := m.selected(); ok && t.ID > 0 {
@@ -746,7 +776,19 @@ func (m model) View() string {
 	case "note":
 		foot = selStyle.Render("  note ▸ ") + m.input + "▌  " + helpStyle.Render("enter save · esc cancel")
 	default:
-		foot = helpStyle.Render("  a add · N note · / filter · h/l/j/k move · H/L drag · ↵ work · o open · e card · d done · n today · s start/stop · I ingest · r reload · q quit")
+		hints := []string{"h/l/j/k move", "H/L drag"}
+		if hookSet("DSKAN_OPEN_CMD") {
+			hints = append(hints, "↵ work")
+		}
+		hints = append(hints, "a add", "N note", "/ filter", "o open", "d done", "n today", "s start/stop")
+		if hookSet("DSKAN_ENRICH_CMD") {
+			hints = append(hints, "e card")
+		}
+		if hookSet("DSKAN_INGEST_CMD") {
+			hints = append(hints, "I ingest")
+		}
+		hints = append(hints, "r reload", "q quit")
+		foot = helpStyle.Render("  " + strings.Join(hints, " · "))
 		if m.filter != "" {
 			foot = selStyle.Render("  ⦿ filter: "+m.filter) + "\n" + foot
 		}
