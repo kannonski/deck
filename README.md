@@ -58,7 +58,7 @@ is set** (otherwise the key is hidden), so you can wire it to your own automatio
 | Env var | Enables | Receives | Notes |
 |---------|---------|----------|-------|
 | `DECK_OPEN_CMD` | `enter` — open a workspace | source URL | runs in the foreground (can show a picker) |
-| `DECK_AGENT_CMD` | `:` — instruct an agent on the card | task id + instruction | foreground; draft / comment / answer |
+| `DECK_AGENT_CMD` | `:` — instruct an agent on the card | task id + instruction | foreground; draft mail / comment·close·(re)label a GitLab issue / answer |
 | `DECK_ENRICH_CMD` | `e` — generate a detail card | task id | async |
 | `DECK_INGEST_CMD` | `I` — pull in new tasks | (none) | async, auto-reloads |
 | `DECK_CARD_DIR` | detail-pane card | — | reads `<dir>/<ref>.md` |
