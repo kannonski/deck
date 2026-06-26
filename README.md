@@ -1,5 +1,7 @@
 # deck
 
+[![ci](https://github.com/kannonski/deck/actions/workflows/ci.yml/badge.svg)](https://github.com/kannonski/deck/actions/workflows/ci.yml)
+
 A kanban TUI for [dstask](https://github.com/naggie/dstask). It reads and writes
 your `~/.dstask` store directly via the dstask library (no subprocess), so it stays
 in sync with the `dstask` CLI.
