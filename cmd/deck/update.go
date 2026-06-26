@@ -103,10 +103,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				case "agent":
 					if t, ok := m.selected(); ok && t.ID > 0 && strings.TrimSpace(m.input) != "" {
-						instr := m.input
+						instr := strings.TrimSpace(m.input)
 						m.mode, m.input = "", ""
-						m.status = "🤖 working…"
-						return m, agentCmd(t.ID, instr)
+						if strings.HasPrefix(instr, "&") { // &-prefix → run in the background
+							if instr = strings.TrimSpace(instr[1:]); instr != "" {
+								m.status = "🤖 agent running in the background…"
+								return m, asyncAgentCmd(t.ID, instr)
+							}
+						} else {
+							m.status = "🤖 working…"
+							return m, agentCmd(t.ID, instr)
+						}
 					}
 					m.mode, m.input = "", ""
 				case "modify":
@@ -235,6 +242,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.act(setTags(t.ID, nil, []string{"now"}), fmt.Sprintf("← #%d out of today", t.ID))
 				} else {
 					m = m.act(setTags(t.ID, []string{"now"}, nil), fmt.Sprintf("→ #%d to today", t.ID))
+				}
+			}
+		case "w": // send to / pull from the waiting list (+waiting)
+			if t, ok := m.selected(); ok && t.ID > 0 {
+				if t.has("waiting") {
+					m = m.act(setTags(t.ID, nil, []string{"waiting"}), fmt.Sprintf("← #%d off waiting", t.ID))
+				} else {
+					var remove []string // adding waiting drops the other column tags so it lands in WAITING
+					for _, tg := range columnTags() {
+						if tg != "waiting" {
+							remove = append(remove, tg)
+						}
+					}
+					m = m.act(setTags(t.ID, []string{"waiting"}, remove), fmt.Sprintf("⏸ #%d → waiting", t.ID))
 				}
 			}
 		case "e": // generate the detail card via DECK_ENRICH_CMD (async)

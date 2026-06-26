@@ -32,7 +32,7 @@ A [`justfile`](justfile) provides `build` / `install` / `run` / `check` / `tidy`
 | `N` / `E` | jot a note / edit the whole note in `$EDITOR` |
 | `m` | modify the card — `+tag` `-tag` `Pn` `project:x` (dstask-style, in place) |
 | `/` | live filter by area / state / summary |
-| `d` `n` `s` | resolve · toggle today (`+now`) · start↔stop |
+| `d` `n` `w` `s` | resolve · toggle today (`+now`) · toggle waiting (`+waiting`) · start↔stop |
 | `f` | focus — a 25-min pomodoro on the card, with a live countdown |
 | `u` | undo the last change (reverts the last commit) |
 | `o` | open the task's source link in the browser |
@@ -65,7 +65,7 @@ deck is fully usable on its own. These hooks add extra keys **only when configur
 | Config (`[hooks]`) · env | Enables | Receives | Notes |
 |---|---|---|---|
 | `open` · `DECK_OPEN_CMD` | `enter` — open a workspace | source URL | foreground (can show a picker) |
-| `agent` · `DECK_AGENT_CMD` | `:` — instruct an agent on the card | task id + instruction | foreground; draft mail / comment·close·(re)label a GitLab issue / answer |
+| `agent` · `DECK_AGENT_CMD` | `:` — instruct an agent on the card (prefix `&` to run it in the background) | task id + instruction | foreground; mail / comment·close·(re)label a GitLab issue with confirm. `&` backgrounds it (no confirm — good for drafts) |
 | `enrich` · `DECK_ENRICH_CMD` | `e` — generate a detail card | task id | async |
 | `ingest` · `DECK_INGEST_CMD` | `I` — pull in new tasks | (none) | async, auto-reloads |
 | `cards.dir` · `DECK_CARD_DIR` | detail-pane card | — | reads `<dir>/<ref>.md` |

@@ -161,11 +161,11 @@ func (m model) helpView() string {
 	b += row("N E", "add a note · edit the note in $EDITOR")
 	b += row("m", "modify:  +tag  -tag  P1  project:x")
 	b += sec("do")
-	b += row("d n s", "done · toggle today · start/stop")
+	b += row("d n w s", "done · today · waiting · start/stop")
 	b += row("f", "focus — a timed block on the card")
 	b += row("u", "undo the last change")
 	b += sec("agent  (when configured)")
-	b += row(": e I", "instruct · generate card · ingest")
+	b += row(": e I", "instruct (& prefix = background) · card · ingest")
 	b += sec("view")
 	b += row("/ r", "filter · reload")
 	b += row("? q", "close this help · quit")
@@ -256,7 +256,7 @@ func (m model) View() string {
 	case "note":
 		foot = selStyle.Render("  note ▸ ") + m.input + "▌  " + helpStyle.Render("enter save · esc cancel")
 	case "agent":
-		foot = selStyle.Render("  agent ▸ ") + m.input + "▌  " + helpStyle.Render("enter run · esc cancel")
+		foot = selStyle.Render("  agent ▸ ") + m.input + "▌  " + helpStyle.Render("enter run · & = background · esc cancel")
 	case "modify":
 		foot = selStyle.Render("  modify ▸ ") + m.input + "▌  " + helpStyle.Render("+tag  -tag  P1  project:x · enter · esc")
 	default:

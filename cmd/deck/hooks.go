@@ -142,3 +142,15 @@ func agentCmd(id int, instruction string) tea.Cmd {
 	}
 	return tea.ExecProcess(c, func(err error) tea.Msg { return agentDoneMsg{err != nil} })
 }
+
+// asyncAgentCmd runs DECK_AGENT_CMD in the BACKGROUND (the board stays usable; it
+// notifies via agentDoneMsg when finished). There's no TTY, so the hook's interactive
+// confirm is skipped — use it for fire-and-forget runs (e.g. a Gmail draft); use agentCmd
+// (foreground) when you want to watch the plan and confirm. Triggered by an &-prefix.
+func asyncAgentCmd(id int, instruction string) tea.Cmd {
+	c := hookCmd(cfg.Hooks.Agent, strconv.Itoa(id), instruction)
+	if c == nil {
+		return nil
+	}
+	return func() tea.Msg { return agentDoneMsg{c.Run() != nil} }
+}
