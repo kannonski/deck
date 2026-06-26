@@ -11,7 +11,7 @@ type model struct {
 	col, card int       // cursor: column index + card index
 	off       []int     // per-column scroll offset (top visible card)
 	detailOff int       // scroll offset within the detail pane (J/K)
-	mode      string    // "" nav · "add" capture · "filter" · "note" · "agent"
+	mode      string    // "" nav · "add" · "filter" · "note" · "agent" · "modify"
 	input     string    // text buffer while in an input mode
 	filter    string    // active filter (area/state/summary substring); "" = all
 	ingesting bool      // a background `I` ingest is in flight
@@ -21,6 +21,7 @@ type model struct {
 	focusEnds time.Time // when the current focus block ends
 	focusGen  int       // bumped on (re)start/stop to invalidate stale ticks
 	status    string    // last-action feedback, shown in the footer
+	help      bool      // the ? key overlay is showing
 }
 
 // clampi keeps v inside [0, n-1]; returns 0 when the column is empty.

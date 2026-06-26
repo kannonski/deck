@@ -116,7 +116,51 @@ func (m model) detailMaxOff() int {
 	return max(len(m.detailLines(detailInnerWidth(m.w)))-detailH, 0)
 }
 
+// helpView is the full keybinding overlay (toggled with ?). The footer stays minimal —
+// everything discoverable lives here, centred over the screen.
+func (m model) helpView() string {
+	accent := lipgloss.Color("212")
+	sec := func(s string) string {
+		return "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true).Render(s) + "\n"
+	}
+	row := func(k, d string) string {
+		return selStyle.Render(fmt.Sprintf("  %-9s", k)) + d + "\n"
+	}
+	b := lipgloss.NewStyle().Foreground(accent).Bold(true).Render("deck") +
+		dimStyle.Render("  · a kanban over dstask") + "\n"
+	b += sec("move")
+	b += row("h l j k", "between columns and cards")
+	b += row("g G", "first / last card")
+	b += row("J K", "scroll the detail pane")
+	b += sec("cards")
+	b += row("H L", "drag the card across columns")
+	b += row("enter", "work on it (open hook)")
+	b += row("o", "open the source link in a browser")
+	b += sec("edit")
+	b += row("a", "capture a new task")
+	b += row("N E", "add a note · edit the note in $EDITOR")
+	b += row("m", "modify:  +tag  -tag  P1  project:x")
+	b += sec("do")
+	b += row("d n s", "done · toggle today · start/stop")
+	b += row("f", "focus — a timed block on the card")
+	b += row("u", "undo the last change")
+	b += sec("agent  (when configured)")
+	b += row(": e I", "instruct · generate card · ingest")
+	b += sec("view")
+	b += row("/ r", "filter · reload")
+	b += row("? q", "close this help · quit")
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).Padding(1, 3).Render(strings.TrimRight(b, "\n"))
+	if m.w > 0 && m.h > 0 {
+		return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
+	}
+	return box
+}
+
 func (m model) View() string {
+	if m.help {
+		return m.helpView()
+	}
 	n := len(m.cols)
 	cw := 30
 	if m.w > 0 {
@@ -193,22 +237,11 @@ func (m model) View() string {
 		foot = selStyle.Render("  note ▸ ") + m.input + "▌  " + helpStyle.Render("enter save · esc cancel")
 	case "agent":
 		foot = selStyle.Render("  agent ▸ ") + m.input + "▌  " + helpStyle.Render("enter run · esc cancel")
+	case "modify":
+		foot = selStyle.Render("  modify ▸ ") + m.input + "▌  " + helpStyle.Render("+tag  -tag  P1  project:x · enter · esc")
 	default:
-		hints := []string{"h/l/j/k move", "H/L drag"}
-		if cfg.Hooks.Open != "" {
-			hints = append(hints, "↵ work")
-		}
-		hints = append(hints, "a add", "N note", "E edit", "/ filter", "o open", "f focus", "d done", "n today", "s start/stop", "u undo")
-		if cfg.Hooks.Agent != "" {
-			hints = append(hints, ": agent")
-		}
-		if cfg.Hooks.Enrich != "" {
-			hints = append(hints, "e card")
-		}
-		if cfg.Hooks.Ingest != "" {
-			hints = append(hints, "I ingest")
-		}
-		hints = append(hints, "r reload", "q quit")
+		// keep the footer to the essentials; ? opens the full overlay
+		hints := []string{"h/l/j/k move", "H/L drag", "a add", "/ filter", "d done", "f focus", "? help", "q quit"}
 		foot = helpStyle.Render("  " + strings.Join(hints, " · "))
 		if m.filter != "" {
 			foot = selStyle.Render("  ⦿ filter: "+m.filter) + "\n" + foot

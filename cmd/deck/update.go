@@ -64,6 +64,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd(m.focusGen)
 	case tea.KeyMsg:
+		if m.help { // the ? overlay is up — any key dismisses it (ctrl+c still quits)
+			if msg.Type == tea.KeyCtrlC {
+				return m, tea.Quit
+			}
+			m.help = false
+			return m, nil
+		}
 		if m.mode != "" { // capture / filter input mode swallows keystrokes
 			switch msg.Type {
 			case tea.KeyCtrlC:
@@ -102,6 +109,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, agentCmd(t.ID, instr)
 					}
 					m.mode, m.input = "", ""
+				case "modify":
+					if t, ok := m.selected(); ok && t.ID > 0 && strings.TrimSpace(m.input) != "" {
+						err := modifyTask(t.ID, m.input)
+						m.mode, m.input = "", ""
+						m = m.act(err, fmt.Sprintf("✎ modified #%d", t.ID))
+					} else {
+						m.mode, m.input = "", ""
+					}
 				default: // filter
 					m.filter = m.input
 					m.mode, m.input = "", ""
@@ -185,6 +200,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				return m, editNoteCmd(t.ID, t.Notes)
 			}
+		case "m": // modify the card: +tag / -tag / Pn / project:x (dstask-style)
+			if t, ok := m.selected(); ok && t.ID > 0 {
+				m.mode, m.input = "modify", ""
+			}
+		case "?": // full keybinding overlay
+			m.help = true
 		case ":": // ask the agent to act on the selected card (draft reply, comment, summarise…)
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				if cfg.Hooks.Agent != "" {

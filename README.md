@@ -30,11 +30,13 @@ A [`justfile`](justfile) provides `build` / `install` / `run` / `check` / `tidy`
 | `J` `K` | scroll the detail pane (long notes / cards) |
 | `a` | capture a task (parses `+tags`, `project:`, `Pn`) |
 | `N` / `E` | jot a note / edit the whole note in `$EDITOR` |
+| `m` | modify the card — `+tag` `-tag` `Pn` `project:x` (dstask-style, in place) |
 | `/` | live filter by area / state / summary |
 | `d` `n` `s` | resolve · toggle today (`+now`) · start↔stop |
 | `f` | focus — a 25-min pomodoro on the card, with a live countdown |
 | `u` | undo the last change (reverts the last commit) |
 | `o` | open the task's source link in the browser |
+| `?` | show the full keybinding overlay |
 | `r` `q` | reload · quit |
 
 The footer shows `✓ N today · 🔥 streak`. Started tasks are marked `▶ active`.

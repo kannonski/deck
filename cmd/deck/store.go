@@ -148,3 +148,28 @@ func appendNote(id int, line string) error {
 func setNote(id int, content string) error {
 	return mutate(id, "Note on", func(t *dstask.Task) { t.Notes = content })
 }
+
+// modifyTask applies dstask-style modifiers to a task: +tag / -tag / Pn / project:x.
+// (Fields are set directly rather than via Task.Modify, which appends to Notes.)
+func modifyTask(id int, query string) error {
+	q := dstask.ParseQuery(strings.Fields(query)...)
+	return mutate(id, "Modified", func(t *dstask.Task) {
+		for _, tag := range q.Tags {
+			addTag(t, tag)
+		}
+		for _, tag := range q.AntiTags {
+			removeTag(t, tag)
+		}
+		if q.Priority != "" {
+			t.Priority = q.Priority
+		}
+		if q.Project != "" {
+			t.Project = q.Project
+		}
+		for _, p := range q.AntiProjects {
+			if t.Project == p {
+				t.Project = ""
+			}
+		}
+	})
+}
