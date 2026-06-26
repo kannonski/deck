@@ -126,6 +126,36 @@ func (m model) reloaded() model {
 	return m.scrolled()
 }
 
+// focusCard re-selects the card with this UUID (used after a move, so the cursor follows
+// it into whatever column it landed in). When toTop, it's reordered to the top of that
+// column so it's easy to track. No-op if not found (e.g. filtered out of view).
+func (m model) focusCard(uuid string, toTop bool) model {
+	for ci := range m.cols {
+		for i, c := range m.cols[ci].cards {
+			if c.UUID != uuid {
+				continue
+			}
+			if toTop && i != 0 {
+				col := m.cols[ci].cards
+				nc := make([]task, 0, len(col))
+				nc = append(nc, col[i])
+				nc = append(nc, col[:i]...)
+				nc = append(nc, col[i+1:]...)
+				m.cols[ci].cards = nc
+			}
+			m.col, m.card = ci, 0
+			for j, sc := range m.shown(ci) { // index within the filtered view
+				if sc.UUID == uuid {
+					m.card = j
+					break
+				}
+			}
+			return m.scrolled()
+		}
+	}
+	return m
+}
+
 // act reloads + reports success, or surfaces the error in the status line.
 func (m model) act(err error, ok string) model {
 	if err != nil {

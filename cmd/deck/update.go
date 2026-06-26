@@ -333,7 +333,11 @@ func (m model) moveTo(target int) model {
 	case tc.Pool: // the actionable pool — drop every column tag
 		err = setTags(t.ID, nil, columnTags())
 	}
-	return m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
+	m = m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
+	if err == nil {
+		m = m.focusCard(t.UUID, true) // follow the card into its new column, at the top
+	}
+	return m
 }
 
 // handleMouse maps mouse events to the board: wheel scrolls the current column, a left
