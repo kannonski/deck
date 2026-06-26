@@ -85,6 +85,50 @@ func setTags(id int, add, remove []string) error {
 	})
 }
 
+// poolHidePriority is the hide_priority of the actionable pool column ("" if none).
+func poolHidePriority() string {
+	for _, c := range cfg.Columns {
+		if c.Pool {
+			return c.HidePriority
+		}
+	}
+	return ""
+}
+
+// raisePriority lifts a priority one level (P3→P2, …), floored at P0.
+func raisePriority(p string) string {
+	switch p {
+	case "P3":
+		return "P2"
+	case "P2":
+		return "P1"
+	case "P1":
+		return "P0"
+	}
+	return p
+}
+
+// dropToPool removes column tags and — if the task would then fall into the pool at the
+// pool's hidden priority — raises it one level so it stays visible. Without this, taking a
+// P3 task off waiting/today (or dragging it to NEXT) would silently vanish it. One commit.
+func dropToPool(id int, remove []string) error {
+	hide := poolHidePriority()
+	return mutate(id, "Modified", func(t *dstask.Task) {
+		for _, r := range remove {
+			removeTag(t, r)
+		}
+		if hide == "" || t.Priority != hide {
+			return
+		}
+		for _, tg := range columnTags() { // still carries a column tag → it won't hit the pool
+			if dstask.StrSliceContains(t.Tags, tg) {
+				return
+			}
+		}
+		t.Priority = raisePriority(hide)
+	})
+}
+
 // addTask captures a new task, parsing +tags / project: / Pn from the text.
 func addTask(text string) error {
 	return silenced(func() error {

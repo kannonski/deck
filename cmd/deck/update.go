@@ -238,16 +238,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "n": // toggle today (+now)
 			if t, ok := m.selected(); ok && t.ID > 0 {
+				var err error
+				msg := fmt.Sprintf("→ #%d to today", t.ID)
 				if t.has("now") {
-					m = m.act(setTags(t.ID, nil, []string{"now"}), fmt.Sprintf("← #%d out of today", t.ID))
+					err = dropToPool(t.ID, []string{"now"})
+					msg = fmt.Sprintf("← #%d out of today", t.ID)
 				} else {
-					m = m.act(setTags(t.ID, []string{"now"}, nil), fmt.Sprintf("→ #%d to today", t.ID))
+					err = setTags(t.ID, []string{"now"}, nil)
+				}
+				m = m.act(err, msg)
+				if err == nil {
+					m = m.focusCard(t.UUID, true)
 				}
 			}
 		case "w": // send to / pull from the waiting list (+waiting)
 			if t, ok := m.selected(); ok && t.ID > 0 {
+				var err error
+				msg := fmt.Sprintf("⏸ #%d → waiting", t.ID)
 				if t.has("waiting") {
-					m = m.act(setTags(t.ID, nil, []string{"waiting"}), fmt.Sprintf("← #%d off waiting", t.ID))
+					err = dropToPool(t.ID, []string{"waiting"})
+					msg = fmt.Sprintf("← #%d off waiting", t.ID)
 				} else {
 					var remove []string // adding waiting drops the other column tags so it lands in WAITING
 					for _, tg := range columnTags() {
@@ -255,7 +265,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							remove = append(remove, tg)
 						}
 					}
-					m = m.act(setTags(t.ID, []string{"waiting"}, remove), fmt.Sprintf("⏸ #%d → waiting", t.ID))
+					err = setTags(t.ID, []string{"waiting"}, remove)
+				}
+				m = m.act(err, msg)
+				if err == nil {
+					m = m.focusCard(t.UUID, true)
 				}
 			}
 		case "e": // generate the detail card via DECK_ENRICH_CMD (async)
@@ -330,8 +344,8 @@ func (m model) moveTo(target int) model {
 			}
 		}
 		err = setTags(t.ID, []string{tc.Tag}, remove)
-	case tc.Pool: // the actionable pool — drop every column tag
-		err = setTags(t.ID, nil, columnTags())
+	case tc.Pool: // the actionable pool — drop every column tag (raise if it'd be hidden)
+		err = dropToPool(t.ID, columnTags())
 	}
 	m = m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
 	if err == nil {
