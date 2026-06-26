@@ -251,27 +251,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m = m.focusCard(t.UUID, true)
 				}
 			}
-		case "w": // send to / pull from the waiting list (+waiting)
-			if t, ok := m.selected(); ok && t.ID > 0 {
-				var err error
-				msg := fmt.Sprintf("⏸ #%d → waiting", t.ID)
-				if t.has("waiting") {
-					err = dropToPool(t.ID, []string{"waiting"})
-					msg = fmt.Sprintf("← #%d off waiting", t.ID)
-				} else {
-					var remove []string // adding waiting drops the other column tags so it lands in WAITING
-					for _, tg := range columnTags() {
-						if tg != "waiting" {
-							remove = append(remove, tg)
-						}
-					}
-					err = setTags(t.ID, []string{"waiting"}, remove)
-				}
-				m = m.act(err, msg)
-				if err == nil {
-					m = m.focusCard(t.UUID, true)
-				}
-			}
 		case "e": // generate the detail card via DECK_ENRICH_CMD (async)
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				if c := enrichCmd(t.ID); c != nil {

@@ -161,7 +161,7 @@ func (m model) helpView() string {
 	b += row("N E", "add a note · edit the note in $EDITOR")
 	b += row("m", "modify:  +tag  -tag  P1  project:x")
 	b += sec("do")
-	b += row("d n w s", "done · today · waiting · start/stop")
+	b += row("d n s", "done · toggle today · start/stop")
 	b += row("f", "focus — a timed block on the card")
 	b += row("u", "undo the last change")
 	b += sec("agent  (when configured)")
