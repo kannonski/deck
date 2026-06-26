@@ -3,11 +3,11 @@ prefix := env_var_or_default("PREFIX", env_var("HOME") / ".local")
 
 # build the binary into the repo
 build:
-    go build -o deck .
+    go build -o deck ./cmd/deck
 
 # build + install to $PREFIX/bin (default ~/.local/bin)
 install:
-    go build -o {{ prefix }}/bin/deck .
+    go build -o {{ prefix }}/bin/deck ./cmd/deck
 
 # build, then run with any extra args (e.g. `just run --once`)
 run *args: build

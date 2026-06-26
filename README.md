@@ -27,7 +27,7 @@ selected task's source link, its notes, and — if configured — a generated ca
 ## Install
 
 ```sh
-go install github.com/kannonski/deck@latest     # or, in a clone: just install
+go install github.com/kannonski/deck/cmd/deck@latest   # or, in a clone: just install
 ```
 
 Requires Go 1.24+ and an existing dstask repo (`~/.dstask`, or `$DSTASK_GIT_REPO`).
