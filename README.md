@@ -103,15 +103,6 @@ The `:` agent — instruct it on a task; it reads, summarises, and (on confirm) 
 
 ![deck `:` agent — summarise a task and resolve it](demo/agent.gif)
 
-Both gifs are rendered headlessly with [vhs](https://github.com/charmbracelet/vhs) from
-[`demo/`](demo/), against a throwaway store (`demo/seed.sh`) — no real data:
-
-```sh
-./demo/seed.sh           # build a fake store in /tmp
-vhs demo/deck.tape       # → demo/demo.gif   (the board)
-vhs demo/agent.tape      # → demo/agent.gif  (uses demo/fake-agent.sh, a stub agent)
-```
-
 ## License
 
 [MIT](LICENSE).
