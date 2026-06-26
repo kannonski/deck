@@ -31,3 +31,12 @@ tidy:
 
 clean:
     rm -f deck
+
+# build the docker image (tag: deck)
+image:
+    docker build -t deck .
+
+# run the image against your ~/.dstask store (interactive). Add a gitconfig mount
+# (-v "$HOME/.gitconfig:/root/.gitconfig:ro") for real commit authorship.
+docker-run: image
+    docker run --rm -it -v "$HOME/.dstask:/root/.dstask" deck

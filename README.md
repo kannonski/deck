@@ -94,6 +94,23 @@ Then `:` on a card → type an instruction (*"draft a reply", "what's the next s
 the reply comes from your local model. The same pattern wires `DECK_ENRICH_CMD` (write a
 card to `$DECK_CARD_DIR`) or any other hook — any script that takes the task id works.
 
+## Docker
+
+deck is a TUI over your dstask store, so the container needs a **TTY** (`-it`) and your
+**`~/.dstask` mounted** in. Writes commit via `git` (bundled in the image; mount your
+`~/.gitconfig` for real authorship). Host hooks aren't present, so it runs as the plain
+standalone board.
+
+```sh
+docker build -t deck .          # or: just image
+docker run --rm -it \
+  -v "$HOME/.dstask:/root/.dstask" \
+  -v "$HOME/.gitconfig:/root/.gitconfig:ro" \   # optional — commit identity
+  deck
+```
+
+The image is ~25 MB (static binary on alpine + git).
+
 ## Demo
 
 deck is interactive, so record a real session rather than shipping a faked cast:
