@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -25,23 +26,41 @@ func removeTag(t *dstask.Task, tag string) {
 	t.Tags = out
 }
 
+// silenced runs fn with stdout/stderr redirected to /dev/null. dstask's git calls
+// inherit os.Stdout/os.Stderr (RunCmd), and that git output would otherwise scroll
+// and corrupt the alt-screen. Bubble Tea renders via its own captured writer, so the
+// screen is unaffected. (Writes run synchronously in Update — no concurrent output.)
+func silenced(fn func() error) error {
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		return fn()
+	}
+	defer null.Close()
+	so, se := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = null, null
+	defer func() { os.Stdout, os.Stderr = so, se }()
+	return fn()
+}
+
 // mutate loads the store, applies fn to task #id, then saves + commits.
 func mutate(id int, msg string, fn func(t *dstask.Task)) error {
-	c := dstask.NewConfig()
-	ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, false)
-	if err != nil {
-		return err
-	}
-	t, err := ts.GetByID(id)
-	if err != nil {
-		return err
-	}
-	fn(&t)
-	if err := ts.UpdateTask(t); err != nil {
-		return err
-	}
-	ts.SavePendingChanges()
-	return dstask.GitCommit(c.Repo, msg+" %s", t)
+	return silenced(func() error {
+		c := dstask.NewConfig()
+		ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, false)
+		if err != nil {
+			return err
+		}
+		t, err := ts.GetByID(id)
+		if err != nil {
+			return err
+		}
+		fn(&t)
+		if err := ts.UpdateTask(t); err != nil {
+			return err
+		}
+		ts.SavePendingChanges()
+		return dstask.GitCommit(c.Repo, msg+" %s", t)
+	})
 }
 
 func done(id int) error {
@@ -68,30 +87,34 @@ func setTags(id int, add, remove []string) error {
 
 // addTask captures a new task, parsing +tags / project: / Pn from the text.
 func addTask(text string) error {
-	c := dstask.NewConfig()
-	ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, false)
-	if err != nil {
-		return err
-	}
-	q := dstask.ParseQuery(strings.Fields(text)...)
-	if strings.TrimSpace(q.Text) == "" {
-		return nil
-	}
-	t := dstask.Task{
-		WritePending: true, Status: dstask.STATUS_PENDING, Summary: q.Text,
-		Tags: q.Tags, Project: q.Project, Priority: q.Priority, Due: q.Due, Notes: q.Note,
-	}
-	if t, err = ts.LoadTask(t); err != nil {
-		return err
-	}
-	ts.SavePendingChanges()
-	return dstask.GitCommit(c.Repo, "Added %s", t)
+	return silenced(func() error {
+		c := dstask.NewConfig()
+		ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, false)
+		if err != nil {
+			return err
+		}
+		q := dstask.ParseQuery(strings.Fields(text)...)
+		if strings.TrimSpace(q.Text) == "" {
+			return nil
+		}
+		t := dstask.Task{
+			WritePending: true, Status: dstask.STATUS_PENDING, Summary: q.Text,
+			Tags: q.Tags, Project: q.Project, Priority: q.Priority, Due: q.Due, Notes: q.Note,
+		}
+		if t, err = ts.LoadTask(t); err != nil {
+			return err
+		}
+		ts.SavePendingChanges()
+		return dstask.GitCommit(c.Repo, "Added %s", t)
+	})
 }
 
 // undoLast reverts the most recent change — every mutation is its own git commit.
 func undoLast() error {
-	c := dstask.NewConfig()
-	return dstask.RunGitCmd(c.Repo, "revert", "--no-edit", "HEAD")
+	return silenced(func() error {
+		c := dstask.NewConfig()
+		return dstask.RunGitCmd(c.Repo, "revert", "--no-edit", "HEAD")
+	})
 }
 
 // splitNote separates the source URL (line 1, if any) from the user notes below.
