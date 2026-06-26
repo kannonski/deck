@@ -8,21 +8,7 @@ Columns: **TODAY** (`+now`) · **NEXT** (the actionable pool, `P3` hidden) ·
 **WAITING** (`+waiting`) · **DONE** (resolved today). A bottom pane shows the
 selected task's source link, its notes, and — if configured — a generated card.
 
-```
-┌ ▸ ★ TODAY ─┐┌ NEXT ───────┐┌ WAITING ──┐┌ ✓ DONE ───┐
-│ ▸ 12 ship …│ │   7 refactor│ │  3 wait …│ │  ✓ deploy │
-│   ▶ active │ │   1 triage …│ │  …       │ │  …        │
-│            │ │ ↓ 41 more   │ │          │ │           │
-└────────────┘└─────────────┘└──────────┘└───────────┘
-┌─ detail ──────────────────────────────────────────────┐
-│ ship the thing   #12 · team · deep · ▶ active          │
-│ ↗ https://gitlab.example/acme/app/-/work_items/12      │
-│                                                        │
-│ 📝 notes (1)                                           │
-│   blocked on review                                    │
-└────────────────────────────────────────────────────────┘
-  ✓ 4 today · 🔥 6      a add · / filter · d done · f focus · q quit
-```
+![deck — browse, filter, capture, note](demo/demo.gif)
 
 ## Install
 
@@ -113,10 +99,17 @@ The image is ~25 MB (static binary on alpine + git).
 
 ## Demo
 
-deck is interactive, so record a real session rather than shipping a faked cast:
+The `:` agent — instruct it on a task; it reads, summarises, and (on confirm) acts:
+
+![deck `:` agent — summarise a task and resolve it](demo/agent.gif)
+
+Both gifs are rendered headlessly with [vhs](https://github.com/charmbracelet/vhs) from
+[`demo/`](demo/), against a throwaway store (`demo/seed.sh`) — no real data:
 
 ```sh
-asciinema rec -c deck deck.cast     # play back: asciinema play deck.cast
+./demo/seed.sh           # build a fake store in /tmp
+vhs demo/deck.tape       # → demo/demo.gif   (the board)
+vhs demo/agent.tape      # → demo/agent.gif  (uses demo/fake-agent.sh, a stub agent)
 ```
 
 ## License
