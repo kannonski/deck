@@ -289,7 +289,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "o": // open the source (issue/MR/mail) in the browser
 			if t, ok := m.selected(); ok {
-				if url, _ := splitNote(t.Notes); url != "" {
+				if url := link(t); url != "" {
 					_ = exec.Command("xdg-open", url).Start()
 					m.status = "↗ opened source in browser"
 				} else {

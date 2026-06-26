@@ -77,8 +77,8 @@ func (m model) detailLines(iw int) []string {
 		lipgloss.NewStyle().Foreground(areaColor(t.Project)).Bold(true).Render(trunc(t.Summary, iw)),
 		dimStyle.Render(trunc(meta, iw)),
 	}
-	url, notes := splitNote(t.Notes)
-	if url != "" {
+	_, notes := splitNote(t.Notes)
+	if url := link(t); url != "" {
 		lines = append(lines, dimStyle.Render(trunc("↗ "+url, iw)))
 	}
 	if notes != "" {

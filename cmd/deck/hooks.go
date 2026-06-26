@@ -13,9 +13,24 @@ import (
 
 // ── detail-pane cards: pre-generated "<ref>.md" files under DECK_CARD_DIR ──
 var (
-	refRe    = regexp.MustCompile(`\[(gl[!#][0-9]+|mail:[^\]]+)\]$`)
-	nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
+	refRe     = regexp.MustCompile(`\[(gl[!#][0-9]+|mail:[^\]]+)\]$`)
+	nonAlnum  = regexp.MustCompile(`[^a-zA-Z0-9]`)
+	urlRe     = regexp.MustCompile(`https?://[^\s]+`)
+	mailRefRe = regexp.MustCompile(`\[mail:([^\]]+)\]`)
 )
+
+// link resolves a task's openable source URL: the first http(s) link anywhere in its
+// notes, or — for a mail task — the Gmail thread URL built from its [mail:<id>] ref (mail
+// tasks don't always store the URL in the note). "" if there's nothing to open.
+func link(t task) string {
+	if u := urlRe.FindString(t.Notes); u != "" {
+		return strings.TrimRight(u, ").,>")
+	}
+	if mm := mailRefRe.FindStringSubmatch(t.Summary); mm != nil {
+		return "https://mail.google.com/mail/u/0/#all/" + mm[1]
+	}
+	return ""
+}
 
 // ── optional external integrations. Configured in config.toml ([hooks] open/agent/
 // enrich/ingest, [cards] dir) or via DECK_* env (the file supersedes env). An empty
