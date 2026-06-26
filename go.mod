@@ -1,4 +1,4 @@
-module deck
+module github.com/kannonski/deck
 
 go 1.26.4
 

@@ -27,10 +27,11 @@ selected task's source link, its notes, and — if configured — a generated ca
 ## Install
 
 ```sh
-go install .            # or: go build -o deck .
+go install github.com/kannonski/deck@latest     # or, in a clone: just install
 ```
 
-Requires Go 1.21+ and an existing dstask repo (`~/.dstask`, or `$DSTASK_GIT_REPO`).
+Requires Go 1.24+ and an existing dstask repo (`~/.dstask`, or `$DSTASK_GIT_REPO`).
+A [`justfile`](justfile) provides `build` / `install` / `run` / `check` / `tidy` recipes.
 
 ## Keys
 
