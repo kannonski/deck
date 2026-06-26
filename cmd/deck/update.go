@@ -275,34 +275,103 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = "this card has no link"
 				}
 			}
-		case "H", "L": // drag the card across columns (TODAY→+now, WAITING→+waiting, DONE→resolve, NEXT→plain)
+		case "H", "L": // drag the card one column left / right
 			dir := -1
 			if msg.String() == "L" {
 				dir = 1
 			}
-			if t, ok := m.selected(); ok && t.ID > 0 {
-				if target := clampi(m.col+dir, len(m.cols)); target != m.col {
-					dest := m.cols[target].title
-					tc := cfg.Columns[target]
-					var err error
-					switch { // derive the dstask op from the target column's config
-					case tc.ResolvedToday:
-						err = done(t.ID)
-					case tc.Tag != "": // exclusively in this tag column
-						var remove []string
-						for _, tg := range columnTags() {
-							if tg != tc.Tag {
-								remove = append(remove, tg)
-							}
-						}
-						err = setTags(t.ID, []string{tc.Tag}, remove)
-					case tc.Pool: // the actionable pool — drop every column tag
-						err = setTags(t.ID, nil, columnTags())
-					}
-					m = m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
+			m = m.moveTo(clampi(m.col+dir, len(m.cols)))
+		}
+	case tea.MouseMsg:
+		m = m.handleMouse(msg)
+	}
+	return m, nil
+}
+
+// moveTo drags the selected card into column `target`, deriving the dstask op from that
+// column's config: resolve (DONE), set its tag exclusively, or drop all column tags (pool).
+func (m model) moveTo(target int) model {
+	t, ok := m.selected()
+	if !ok || t.ID <= 0 || target < 0 || target >= len(m.cols) || target == m.col {
+		return m
+	}
+	dest := m.cols[target].title
+	tc := cfg.Columns[target]
+	var err error
+	switch {
+	case tc.ResolvedToday:
+		err = done(t.ID)
+	case tc.Tag != "": // exclusively in this tag column
+		var remove []string
+		for _, tg := range columnTags() {
+			if tg != tc.Tag {
+				remove = append(remove, tg)
+			}
+		}
+		err = setTags(t.ID, []string{tc.Tag}, remove)
+	case tc.Pool: // the actionable pool — drop every column tag
+		err = setTags(t.ID, nil, columnTags())
+	}
+	return m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
+}
+
+// handleMouse maps mouse events to the board: wheel scrolls the current column, a left
+// click selects the card under the cursor, and pressing on a card then releasing over a
+// different column drags it there. Column width matches View (cw+2 incl. border).
+func (m model) handleMouse(msg tea.MouseMsg) model {
+	if m.help || m.mode != "" {
+		return m // overlay / input mode owns the screen
+	}
+	n := len(m.cols)
+	if n == 0 {
+		return m
+	}
+	cw := 30
+	if m.w > 0 {
+		cw = max(m.w/n-2, 16)
+	}
+	bw := cw + 2
+	colOf := func(x int) int { return clampi(x/bw, n) }
+	colH, _, _ := m.layout()
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.card = clampi(m.card-1, m.visN())
+		return m.scrolled()
+	case tea.MouseButtonWheelDown:
+		m.card = clampi(m.card+1, m.visN())
+		return m.scrolled()
+	case tea.MouseButtonLeft:
+		switch msg.Action {
+		case tea.MouseActionPress:
+			if msg.Y >= colH+2 { // below the board (detail/footer) — don't arm a drag
+				m.dragFrom = -1
+				return m
+			}
+			m.col = colOf(msg.X)
+			off := 0
+			if m.col < len(m.off) {
+				off = m.off[m.col]
+			}
+			line := msg.Y - 3 // box border + title + blank row
+			if off > 0 {
+				line-- // "↑ more" indicator row
+			}
+			if line < 0 {
+				line = 0
+			}
+			m.card = clampi(off+line/2, m.visN()) // each card is two rows (summary + meta)
+			m.dragFrom = m.col
+			return m.scrolled()
+		case tea.MouseActionRelease:
+			if m.dragFrom >= 0 {
+				if target := colOf(msg.X); target != m.dragFrom {
+					m.col = m.dragFrom
+					m = m.moveTo(target)
 				}
+				m.dragFrom = -1
 			}
 		}
 	}
-	return m, nil
+	return m
 }

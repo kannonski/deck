@@ -68,16 +68,16 @@ func buildColumns() []column {
 // load reads the store and buckets tasks into the configured columns; also returns the
 // streak. An open task lands in the first column whose `tag` it carries, else the `pool`
 // column (skipping `hide_priority`); resolved-today tasks go to `resolved_today`.
-func load() ([]column, int) {
+func load() ([]column, int, []int) {
 	cols := buildColumns()
 	conf := dstask.NewConfig()
 	ts, err := dstask.LoadTaskSet(conf.Repo, conf.IDsFile, true) // include resolved for the DONE column
 	if err != nil {
-		return cols, 0
+		return cols, 0, nil
 	}
 	today := time.Now().Format("2006-01-02")
 	buckets := make([][]task, len(cfg.Columns))
-	resolvedDays := map[string]bool{}
+	resolvedDays := map[string]int{} // YYYY-MM-DD → number resolved that day
 
 	poolIdx := -1
 	for i, cc := range cfg.Columns {
@@ -91,7 +91,7 @@ func load() ([]column, int) {
 		switch dt.Status {
 		case dstask.STATUS_RESOLVED:
 			if t.Resolved != "" {
-				resolvedDays[t.Resolved] = true
+				resolvedDays[t.Resolved]++
 			}
 			if strings.HasPrefix(t.Resolved, today) {
 				for i, cc := range cfg.Columns {
@@ -125,23 +125,34 @@ func load() ([]column, int) {
 	for i := range cols {
 		cols[i].cards = buckets[i]
 	}
-	return cols, streakFrom(resolvedDays)
+	return cols, streakFrom(resolvedDays), sparkFrom(resolvedDays)
 }
 
 // streakFrom counts consecutive days (through today, or yesterday if nothing yet
 // today) that have at least one resolved task.
-func streakFrom(days map[string]bool) int {
+func streakFrom(days map[string]int) int {
 	if len(days) == 0 {
 		return 0
 	}
 	d := time.Now()
-	if !days[d.Format("2006-01-02")] {
+	if days[d.Format("2006-01-02")] == 0 {
 		d = d.AddDate(0, 0, -1) // nothing closed today yet is fine — no broken streak
 	}
 	n := 0
-	for days[d.Format("2006-01-02")] {
+	for days[d.Format("2006-01-02")] > 0 {
 		n++
 		d = d.AddDate(0, 0, -1)
 	}
 	return n
+}
+
+// sparkFrom returns the number resolved on each of the last 7 days, oldest first
+// (today last) — the footer renders it as a sparkline.
+func sparkFrom(days map[string]int) []int {
+	out := make([]int, 7)
+	now := time.Now()
+	for i := range 7 {
+		out[i] = days[now.AddDate(0, 0, -(6-i)).Format("2006-01-02")]
+	}
+	return out
 }

@@ -19,6 +19,9 @@ minutes = 25                  # `f` pomodoro length
 
 [ui]
 detail_fraction = 0.40        # detail-pane height as a fraction of the screen (0.2–0.6)
+mouse = false                 # wheel-scroll, click-to-select, drag a card to a column.
+                              # off by default: mouse capture disables the terminal's own
+                              # text selection (hold Shift to select/copy while it's on).
 
 # 256-colour codes. [theme.area] maps a dstask project to a colour ("default" = fallback).
 [theme]

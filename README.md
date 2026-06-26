@@ -39,7 +39,12 @@ A [`justfile`](justfile) provides `build` / `install` / `run` / `check` / `tidy`
 | `?` | show the full keybinding overlay |
 | `r` `q` | reload · quit |
 
-The footer shows `✓ N today · 🔥 streak`. Started tasks are marked `▶ active`.
+The footer shows `✓ N today · 🔥 streak · ▁▂▃▅█ 7d` (resolves over the last week).
+Started tasks are marked `▶ active`.
+
+Set `mouse = true` under `[ui]` for wheel-scroll, click-to-select, and dragging a card
+onto another column. Mouse capture disables the terminal's native text selection — hold
+**Shift** to select/copy while it's on.
 
 ## Configuration
 

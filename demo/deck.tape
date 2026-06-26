@@ -44,5 +44,9 @@ Type 'keep it under ten seconds'
 Sleep 700ms
 Enter
 Sleep 1.8s
+Type '?'                   # the full keybinding overlay
+Sleep 2.2s
+Escape                     # any key closes it
+Sleep 700ms
 Type 'q'
 Sleep 500ms

@@ -26,13 +26,17 @@ func main() {
 
 	cfg = loadConfig()
 	applyTheme()
-	c, s := load()
-	m := model{cols: c, streak: s, off: make([]int, len(c))}
+	c, s, sp := load()
+	m := model{cols: c, streak: s, spark: sp, off: make([]int, len(c)), dragFrom: -1}
 	if *once {
 		fmt.Println(m.View())
 		return
 	}
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if cfg.UI.Mouse { // wheel-scroll, click-select, drag-to-column
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	if _, err := tea.NewProgram(m, opts...).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

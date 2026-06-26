@@ -25,6 +25,26 @@ func areaColor(p string) lipgloss.Color {
 	return lipgloss.Color(cfg.Theme.Area["default"])
 }
 
+// sparkline renders counts as block glyphs (▁▂▃▄▅▆▇█) scaled to the window max.
+// Returns "" when nothing happened in the window (so the footer stays quiet).
+func sparkline(counts []int) string {
+	bars := []rune("▁▂▃▄▅▆▇█")
+	mx := 0
+	for _, c := range counts {
+		if c > mx {
+			mx = c
+		}
+	}
+	if mx == 0 {
+		return ""
+	}
+	b := make([]rune, len(counts))
+	for i, c := range counts {
+		b[i] = bars[c*(len(bars)-1)/mx]
+	}
+	return string(b)
+}
+
 func trunc(s string, n int) string {
 	r := []rune(s)
 	if n < 1 {
@@ -265,6 +285,11 @@ func (m model) View() string {
 		stats := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Render(fmt.Sprintf("  ✓ %d today", done))
 		if m.streak > 0 {
 			stats += lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(fmt.Sprintf("  ·  🔥 %d", m.streak))
+		}
+		if s := sparkline(m.spark); s != "" {
+			stats += dimStyle.Render("  ·  ") +
+				lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render(s) +
+				dimStyle.Render(" 7d")
 		}
 		foot = stats + "\n" + foot
 	}

@@ -16,12 +16,14 @@ type model struct {
 	filter    string    // active filter (area/state/summary substring); "" = all
 	ingesting bool      // a background `I` ingest is in flight
 	streak    int       // consecutive days with a resolved task (computed on load)
+	spark     []int     // resolved-per-day for the last 7 days (footer sparkline)
 	focusing  bool      // a focus countdown is running
 	focusID   int       // the task being focused
 	focusEnds time.Time // when the current focus block ends
 	focusGen  int       // bumped on (re)start/stop to invalidate stale ticks
 	status    string    // last-action feedback, shown in the footer
 	help      bool      // the ? key overlay is showing
+	dragFrom  int       // column a mouse-drag started in (-1 = no drag armed)
 }
 
 // clampi keeps v inside [0, n-1]; returns 0 when the column is empty.
@@ -110,7 +112,7 @@ func (m model) selected() (task, bool) {
 
 // reloaded re-reads dstask and clamps the cursor + offsets back into range.
 func (m model) reloaded() model {
-	m.cols, m.streak = load()
+	m.cols, m.streak, m.spark = load()
 	if len(m.off) != len(m.cols) {
 		m.off = make([]int, len(m.cols))
 	}

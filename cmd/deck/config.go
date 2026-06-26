@@ -47,6 +47,7 @@ type Config struct {
 	} `toml:"focus"`
 	UI struct {
 		DetailFraction float64 `toml:"detail_fraction"` // detail pane height ≈ this × screen
+		Mouse          bool    `toml:"mouse"`           // wheel-scroll, click-select, drag-to-column (off by default: capture disables native text selection — Shift to select)
 	} `toml:"ui"`
 	Theme   themeConf `toml:"theme"`
 	Columns []colConf `toml:"columns"`
@@ -102,6 +103,9 @@ func loadConfig() Config {
 		if v := os.Getenv(env); v != "" {
 			*dst = v
 		}
+	}
+	if v := os.Getenv("DECK_MOUSE"); v == "1" || v == "true" {
+		c.UI.Mouse = true
 	}
 	if b, err := os.ReadFile(configPath()); err == nil {
 		if err := toml.Unmarshal(b, &c); err != nil {
