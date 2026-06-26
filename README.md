@@ -67,6 +67,21 @@ The command in each var is split on spaces and run with the argument(s) appended
 (e.g. `DECK_OPEN_CMD="mytool open"` runs `mytool open <url>`). `enter` and `:` run in
 the foreground (the TUI suspends) so the command can prompt or show a picker.
 
+### With a local LLM (no cloud)
+
+The hooks are just programs, so point them at a local model and nothing leaves your
+machine. [`examples/agent-ollama.sh`](examples/agent-ollama.sh) is a ready `DECK_AGENT_CMD`
+that answers via [Ollama](https://ollama.com):
+
+```sh
+export DECK_AGENT_CMD="$PWD/examples/agent-ollama.sh"
+export DECK_OLLAMA_MODEL=llama3.2     # any model you've pulled
+```
+
+Then `:` on a card → type an instruction (*"draft a reply", "what's the next step?"*) →
+the reply comes from your local model. The same pattern wires `DECK_ENRICH_CMD` (write a
+card to `$DECK_CARD_DIR`) or any other hook — any script that takes the task id works.
+
 ## Demo
 
 deck is interactive, so record a real session rather than shipping a faked cast:
