@@ -34,7 +34,7 @@ A [`justfile`](justfile) provides `build` / `install` / `run` / `check` / `tidy`
 | `/` | live filter by area / state / summary |
 | `d` `n` `s` | resolve · toggle today (`+now`) · start↔stop |
 | `f` | focus — a 25-min pomodoro on the card, with a live countdown |
-| `u` | undo the last change (reverts the last commit) |
+| `u` `U` | undo the last change (reverts the last commit) · `U` reopens a DONE task (un-resolve) |
 | `o` | open the task's source link in the browser |
 | `?` | show the full keybinding overlay |
 | `r` `q` | reload · quit |

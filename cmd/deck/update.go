@@ -157,6 +157,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "↻ reloaded"
 		case "u": // undo the last change (revert the last commit)
 			m = m.act(undoLast(), "↩ undid the last change")
+		case "U": // un-resolve: bring a DONE task back to pending
+			if t, ok := m.selected(); ok && t.UUID != "" {
+				if t.Status == dstask.STATUS_RESOLVED {
+					err := reopen(t.UUID)
+					m = m.act(err, fmt.Sprintf("↺ reopened: %s", trunc(t.Summary, 30)))
+					if err == nil {
+						m = m.focusCard(t.UUID, true) // follow it back onto the board
+					}
+				} else {
+					m.status = "U reopens a DONE task"
+				}
+			}
 		case "I": // background ingest via DECK_INGEST_CMD; auto-reloads when done
 			if m.ingesting {
 				m.status = "📥 already ingesting…"

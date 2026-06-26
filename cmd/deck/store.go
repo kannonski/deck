@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -108,24 +109,57 @@ func raisePriority(p string) string {
 	return p
 }
 
-// dropToPool removes column tags and — if the task would then fall into the pool at the
-// pool's hidden priority — raises it one level so it stays visible. Without this, taking a
-// P3 task off waiting/today (or dragging it to NEXT) would silently vanish it. One commit.
-func dropToPool(id int, remove []string) error {
+// raiseIfPoolHidden raises a task's priority one level if it has no column tag and sits at
+// the pool's hidden priority — so it stays visible in NEXT instead of vanishing.
+func raiseIfPoolHidden(t *dstask.Task) {
 	hide := poolHidePriority()
+	if hide == "" || t.Priority != hide {
+		return
+	}
+	for _, tg := range columnTags() { // still carries a column tag → it won't hit the pool
+		if dstask.StrSliceContains(t.Tags, tg) {
+			return
+		}
+	}
+	t.Priority = raisePriority(hide)
+}
+
+// dropToPool removes column tags and keeps the task visible if it lands in the pool.
+// Without this, taking a P3 task off waiting/today (or dragging it to NEXT) would vanish it.
+func dropToPool(id int, remove []string) error {
 	return mutate(id, "Modified", func(t *dstask.Task) {
 		for _, r := range remove {
 			removeTag(t, r)
 		}
-		if hide == "" || t.Priority != hide {
-			return
+		raiseIfPoolHidden(t)
+	})
+}
+
+// reopen un-resolves a task (DONE → pending). dstask forbids the resolved→pending
+// transition via UpdateTask, so we write the file directly: SaveToDisk places a task by
+// its Status and removes the stale resolved copy. Loads resolved tasks and matches by UUID
+// (DONE cards carry no id), and lifts it out of the hidden pool priority so it doesn't
+// reopen invisibly.
+func reopen(uuid string) error {
+	return silenced(func() error {
+		c := dstask.NewConfig()
+		ts, err := dstask.LoadTaskSet(c.Repo, c.IDsFile, true) // include resolved
+		if err != nil {
+			return err
 		}
-		for _, tg := range columnTags() { // still carries a column tag → it won't hit the pool
-			if dstask.StrSliceContains(t.Tags, tg) {
-				return
+		for _, t := range ts.AllTasks() {
+			if t.UUID != uuid {
+				continue
 			}
+			t.Status = dstask.STATUS_PENDING
+			t.Resolved = time.Time{}
+			t.ID = 0
+			raiseIfPoolHidden(&t)
+			t.WritePending = true
+			t.SaveToDisk(c.Repo)
+			return dstask.GitCommit(c.Repo, "Reopened %s", t)
 		}
-		t.Priority = raisePriority(hide)
+		return errors.New("no resolved task with that id")
 	})
 }
 

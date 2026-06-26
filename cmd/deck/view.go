@@ -163,7 +163,7 @@ func (m model) helpView() string {
 	b += sec("do")
 	b += row("d n s", "done · toggle today · start/stop")
 	b += row("f", "focus — a timed block on the card")
-	b += row("u", "undo the last change")
+	b += row("u U", "undo last change · un-resolve a DONE task")
 	b += sec("agent  (when configured)")
 	b += row(": e I", "instruct (& prefix = background) · card · ingest")
 	b += sec("view")
