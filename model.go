@@ -67,9 +67,9 @@ func (m model) layout() (colH, detailH, vis int) {
 	if h <= 0 {
 		h = 40
 	}
-	const footer = 5                  // stats + help + up to three of focus/filter/ingesting/status
-	detail := max(h*2/5, 10)          // a big detail pane: ~40% of the screen, ≥10 rows
-	detail = min(detail, h-footer-10) // always leave ≥10 rows for the board
+	const footer = 5                                         // stats + help + up to three of focus/filter/ingesting/status
+	detail := max(int(float64(h)*cfg.UI.DetailFraction), 10) // detail pane ≈ fraction of screen, ≥10 rows
+	detail = min(detail, h-footer-10)                        // always leave ≥10 rows for the board
 	detail = max(detail, 5)
 	colH = max((h-footer-detail)-2, 5) // -2 for the column box border
 	detailH = max(detail-2, 3)         // -2 for the detail box border

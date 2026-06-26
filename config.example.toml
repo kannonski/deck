@@ -1,0 +1,59 @@
+# deck configuration — copy to ~/.config/deck/config.toml ($XDG_CONFIG_HOME honored).
+# Every section is optional; omitted values fall back to DECK_* env, then built-in
+# defaults. The file SUPERSEDES env. Paths may start with "~/".
+
+# External hooks. Each is a command line; deck appends the argument(s) and runs it.
+# An empty/absent hook hides its key. `enter` and `:` run in the foreground (the TUI
+# suspends, so the command can prompt or show a picker).
+[hooks]
+# open   = "mytool open"      # enter — receives the task's source URL
+# agent  = "mytool agent"     # :     — receives the task id + your instruction
+# enrich = "mytool enrich"    # e     — receives the task id (writes a card to cards.dir)
+# ingest = "mytool ingest"    # I     — pulls in new tasks (no args)
+
+[cards]
+# dir = "~/.cache/deck/cards" # detail-pane cards: <dir>/<ref>.md, ref from [gl#N]/[mail:x]
+
+[focus]
+minutes = 25                  # `f` pomodoro length
+
+[ui]
+detail_fraction = 0.40        # detail-pane height as a fraction of the screen (0.2–0.6)
+
+# 256-colour codes. [theme.area] maps a dstask project to a colour ("default" = fallback).
+[theme]
+id     = "117"
+dim    = "240"
+select = "212"
+active = "120"
+[theme.area]
+customer = "211"
+team     = "117"
+work     = "180"
+personal = "150"
+default  = "245"
+
+# Columns. Omit the [[columns]] list entirely for the default TODAY/NEXT/WAITING/DONE
+# below. An open task lands in the first column whose `tag` it carries; otherwise the
+# `pool` column (skipping `hide_priority`). Resolved-today tasks go to `resolved_today`.
+# Drag (H/L) derives the dstask change from the target column.
+[[columns]]
+title = "★ TODAY"
+accent = "183"
+tag = "now"
+
+[[columns]]
+title = "NEXT"
+accent = "117"
+pool = true
+hide_priority = "P3"
+
+[[columns]]
+title = "WAITING"
+accent = "245"
+tag = "waiting"
+
+[[columns]]
+title = "✓ DONE"
+accent = "120"
+resolved_today = true

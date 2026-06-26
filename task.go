@@ -56,26 +56,36 @@ type column struct {
 	cards  []task
 }
 
-func emptyCols() []column {
-	return []column{
-		{"★ TODAY", lipgloss.Color("183"), nil},
-		{"NEXT", lipgloss.Color("117"), nil},
-		{"WAITING", lipgloss.Color("245"), nil},
-		{"✓ DONE", lipgloss.Color("120"), nil},
+// buildColumns turns the configured columns into render columns (without cards).
+func buildColumns() []column {
+	cols := make([]column, len(cfg.Columns))
+	for i, cc := range cfg.Columns {
+		cols[i] = column{title: cc.Title, accent: lipgloss.Color(cc.Accent)}
 	}
+	return cols
 }
 
-// load reads the store and buckets tasks into the four columns; also returns the streak.
+// load reads the store and buckets tasks into the configured columns; also returns the
+// streak. An open task lands in the first column whose `tag` it carries, else the `pool`
+// column (skipping `hide_priority`); resolved-today tasks go to `resolved_today`.
 func load() ([]column, int) {
+	cols := buildColumns()
 	conf := dstask.NewConfig()
 	ts, err := dstask.LoadTaskSet(conf.Repo, conf.IDsFile, true) // include resolved for the DONE column
 	if err != nil {
-		return emptyCols(), 0
+		return cols, 0
 	}
 	today := time.Now().Format("2006-01-02")
-
-	var now, next, waiting, done []task
+	buckets := make([][]task, len(cfg.Columns))
 	resolvedDays := map[string]bool{}
+
+	poolIdx := -1
+	for i, cc := range cfg.Columns {
+		if cc.Pool {
+			poolIdx = i
+		}
+	}
+
 	for _, dt := range ts.AllTasks() {
 		t := toTask(dt)
 		switch dt.Status {
@@ -84,24 +94,37 @@ func load() ([]column, int) {
 				resolvedDays[t.Resolved] = true
 			}
 			if strings.HasPrefix(t.Resolved, today) {
-				done = append(done, t)
+				for i, cc := range cfg.Columns {
+					if cc.ResolvedToday {
+						buckets[i] = append(buckets[i], t)
+					}
+				}
 			}
 		case dstask.STATUS_PENDING, dstask.STATUS_ACTIVE, dstask.STATUS_PAUSED,
 			dstask.STATUS_DELEGATED, dstask.STATUS_DEFERRED:
-			switch {
-			case t.has("now"):
-				now = append(now, t)
-			case t.has("waiting"):
-				waiting = append(waiting, t)
-			case t.Priority != "P3": // hide the declassified / vuln-mgmt noise from the active flow
-				next = append(next, t)
+			placed := false
+			for i, cc := range cfg.Columns {
+				if cc.Tag != "" && t.has(cc.Tag) {
+					buckets[i] = append(buckets[i], t)
+					placed = true
+					break
+				}
+			}
+			if !placed && poolIdx >= 0 {
+				if hp := cfg.Columns[poolIdx].HidePriority; hp == "" || t.Priority != hp {
+					buckets[poolIdx] = append(buckets[poolIdx], t)
+				}
 			}
 		}
 	}
-	sort.SliceStable(next, func(i, j int) bool { return next[i].Priority < next[j].Priority })
-
-	cols := emptyCols()
-	cols[0].cards, cols[1].cards, cols[2].cards, cols[3].cards = now, next, waiting, done
+	if poolIdx >= 0 {
+		sort.SliceStable(buckets[poolIdx], func(i, j int) bool {
+			return buckets[poolIdx][i].Priority < buckets[poolIdx][j].Priority
+		})
+	}
+	for i := range cols {
+		cols[i].cards = buckets[i]
+	}
 	return cols, streakFrom(resolvedDays)
 }
 

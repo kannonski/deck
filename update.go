@@ -187,10 +187,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case ":": // ask the agent to act on the selected card (draft reply, comment, summarise…)
 			if t, ok := m.selected(); ok && t.ID > 0 {
-				if hookSet("DECK_AGENT_CMD") {
+				if cfg.Hooks.Agent != "" {
 					m.mode, m.input = "agent", ""
 				} else {
-					m.status = "set DECK_AGENT_CMD to enable the agent"
+					m.status = "set [hooks].agent to enable the agent"
 				}
 			}
 
@@ -238,10 +238,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.focusing, m.focusGen = false, m.focusGen+1
 					m = m.act(stopTask(t.ID), fmt.Sprintf("■ focus ended on #%d", t.ID))
 				} else {
-					m.focusID, m.focusEnds, m.focusing = t.ID, time.Now().Add(focusMinutes*time.Minute), true
+					m.focusID, m.focusEnds, m.focusing = t.ID, time.Now().Add(time.Duration(cfg.Focus.Minutes)*time.Minute), true
 					m.focusGen++
 					gen := m.focusGen
-					m = m.act(startTask(t.ID), fmt.Sprintf("⏳ focus #%d · %02d:00", t.ID, focusMinutes))
+					m = m.act(startTask(t.ID), fmt.Sprintf("⏳ focus #%d · %02d:00", t.ID, cfg.Focus.Minutes))
 					return m, tickCmd(gen)
 				}
 			}
@@ -262,16 +262,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t, ok := m.selected(); ok && t.ID > 0 {
 				if target := clampi(m.col+dir, len(m.cols)); target != m.col {
 					dest := m.cols[target].title
+					tc := cfg.Columns[target]
 					var err error
-					switch target { // columns are fixed in load(): 0 TODAY · 1 NEXT · 2 WAITING · 3 DONE
-					case 0:
-						err = setTags(t.ID, []string{"now"}, []string{"waiting"})
-					case 1:
-						err = setTags(t.ID, nil, []string{"now", "waiting"})
-					case 2:
-						err = setTags(t.ID, []string{"waiting"}, []string{"now"})
-					case 3:
+					switch { // derive the dstask op from the target column's config
+					case tc.ResolvedToday:
 						err = done(t.ID)
+					case tc.Tag != "": // exclusively in this tag column
+						var remove []string
+						for _, tg := range columnTags() {
+							if tg != tc.Tag {
+								remove = append(remove, tg)
+							}
+						}
+						err = setTags(t.ID, []string{tc.Tag}, remove)
+					case tc.Pool: // the actionable pool — drop every column tag
+						err = setTags(t.ID, nil, columnTags())
 					}
 					m = m.act(err, fmt.Sprintf("moved #%d → %s", t.ID, dest))
 				}

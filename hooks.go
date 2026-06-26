@@ -17,18 +17,14 @@ var (
 	nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 )
 
-// ── optional external integrations, wired via env so the core stays standalone ──
+// ── optional external integrations. Configured in config.toml ([hooks] open/agent/
+// enrich/ingest, [cards] dir) or via DECK_* env (the file supersedes env). An empty
+// hook hides its key, so the core stays a standalone dstask kanban. ──
 //
-//	DECK_OPEN_CMD   <url> → `enter`  (e.g. open a repo / workspace)
-//	DECK_ENRICH_CMD <id>  → `e`      (generate the detail card)
-//	DECK_INGEST_CMD       → `I`      (pull in new tasks)
-//	DECK_AGENT_CMD <id> <instr> → `:` (act on the task)
-//	DECK_CARD_DIR         → folder of pre-generated "<ref>.md" detail cards
-func hookSet(env string) bool { return strings.TrimSpace(os.Getenv(env)) != "" }
-
-// hookCmd builds a command from an env var (space-split) plus extra args; nil if unset.
-func hookCmd(env string, args ...string) *exec.Cmd {
-	parts := strings.Fields(os.Getenv(env))
+// hookCmd builds a command from a configured command line (space-split) plus extra
+// args; nil if the command line is empty (the corresponding key is then hidden).
+func hookCmd(cmdline string, args ...string) *exec.Cmd {
+	parts := strings.Fields(cmdline)
 	if len(parts) == 0 {
 		return nil
 	}
@@ -37,7 +33,7 @@ func hookCmd(env string, args ...string) *exec.Cmd {
 
 // descPath maps a task's source ref to its card file under DECK_CARD_DIR ("" if unset).
 func descPath(summary string) string {
-	dir := strings.TrimSpace(os.Getenv("DECK_CARD_DIR"))
+	dir := cfg.Cards.Dir
 	if dir == "" {
 		return ""
 	}
@@ -56,7 +52,7 @@ func cardText(t task) string {
 	if b, err := os.ReadFile(f); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		return strings.TrimRight(string(b), "\n")
 	}
-	if hookSet("DECK_ENRICH_CMD") {
+	if cfg.Hooks.Enrich != "" {
 		return "⏳ no card yet — press e to generate"
 	}
 	return ""
@@ -69,7 +65,7 @@ type enrichedMsg struct {
 }
 
 func enrichCmd(id int) tea.Cmd {
-	c := hookCmd("DECK_ENRICH_CMD", strconv.Itoa(id))
+	c := hookCmd(cfg.Hooks.Enrich, strconv.Itoa(id))
 	if c == nil {
 		return nil
 	}
@@ -83,7 +79,7 @@ type openedMsg struct{ err bool }
 type ingestedMsg struct{ err bool }
 
 func ingestCmd() tea.Cmd {
-	c := hookCmd("DECK_INGEST_CMD")
+	c := hookCmd(cfg.Hooks.Ingest)
 	if c == nil {
 		return nil
 	}
@@ -97,8 +93,6 @@ type tickMsg struct{ gen int }
 func tickCmd(gen int) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{gen} })
 }
-
-const focusMinutes = 25
 
 // noteEditedMsg carries the edited note text back from $EDITOR.
 type noteEditedMsg struct {
@@ -142,7 +136,7 @@ type agentDoneMsg struct{ err bool }
 // (suspends the TUI, like enter) so it can read the source, draft, and — for GitLab —
 // show the draft and prompt to post, all on the terminal. Returns nil if unset.
 func agentCmd(id int, instruction string) tea.Cmd {
-	c := hookCmd("DECK_AGENT_CMD", strconv.Itoa(id), instruction)
+	c := hookCmd(cfg.Hooks.Agent, strconv.Itoa(id), instruction)
 	if c == nil {
 		return nil
 	}

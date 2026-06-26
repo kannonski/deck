@@ -19,17 +19,10 @@ var (
 )
 
 func areaColor(p string) lipgloss.Color {
-	switch p {
-	case "customer":
-		return lipgloss.Color("211")
-	case "team":
-		return lipgloss.Color("117")
-	case "work":
-		return lipgloss.Color("180")
-	case "personal":
-		return lipgloss.Color("150")
+	if c := cfg.Theme.Area[p]; c != "" {
+		return lipgloss.Color(c)
 	}
-	return lipgloss.Color("245")
+	return lipgloss.Color(cfg.Theme.Area["default"])
 }
 
 func trunc(s string, n int) string {
@@ -162,7 +155,7 @@ func (m model) View() string {
 			metaSt := dimStyle
 			if t.Status == dstask.STATUS_ACTIVE {
 				meta = "▶ active · " + meta
-				metaSt = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
+				metaSt = lipgloss.NewStyle().Foreground(lipgloss.Color(cfg.Theme.Active))
 			}
 			sumSt := lipgloss.NewStyle().Foreground(areaColor(t.Project))
 			marker := "  "
@@ -202,17 +195,17 @@ func (m model) View() string {
 		foot = selStyle.Render("  agent ▸ ") + m.input + "▌  " + helpStyle.Render("enter run · esc cancel")
 	default:
 		hints := []string{"h/l/j/k move", "H/L drag"}
-		if hookSet("DECK_OPEN_CMD") {
+		if cfg.Hooks.Open != "" {
 			hints = append(hints, "↵ work")
 		}
 		hints = append(hints, "a add", "N note", "E edit", "/ filter", "o open", "f focus", "d done", "n today", "s start/stop", "u undo")
-		if hookSet("DECK_AGENT_CMD") {
+		if cfg.Hooks.Agent != "" {
 			hints = append(hints, ": agent")
 		}
-		if hookSet("DECK_ENRICH_CMD") {
+		if cfg.Hooks.Enrich != "" {
 			hints = append(hints, "e card")
 		}
-		if hookSet("DECK_INGEST_CMD") {
+		if cfg.Hooks.Ingest != "" {
 			hints = append(hints, "I ingest")
 		}
 		hints = append(hints, "r reload", "q quit")

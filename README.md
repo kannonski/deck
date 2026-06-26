@@ -50,22 +50,33 @@ Requires Go 1.21+ and an existing dstask repo (`~/.dstask`, or `$DSTASK_GIT_REPO
 
 The footer shows `✓ N today · 🔥 streak`. Started tasks are marked `▶ active`.
 
-## Optional integrations (env-configured)
+## Configuration
 
-deck is fully usable on its own. These hooks add extra keys **only when the env var
-is set** (otherwise the key is hidden), so you can wire it to your own automation:
+deck reads `~/.config/deck/config.toml` (`$XDG_CONFIG_HOME` honored). It's optional —
+with no file you get a plain standalone board. See [`config.example.toml`](config.example.toml)
+for the full, commented schema: `[hooks]`, `[cards]`, `[focus]`, `[ui]`, `[theme]`, and
+`[[columns]]` (the column set + the tags/priority that bucket tasks into them; the `H/L`
+drag derives its dstask change from the target column).
 
-| Env var | Enables | Receives | Notes |
-|---------|---------|----------|-------|
-| `DECK_OPEN_CMD` | `enter` — open a workspace | source URL | runs in the foreground (can show a picker) |
-| `DECK_AGENT_CMD` | `:` — instruct an agent on the card | task id + instruction | foreground; draft mail / comment·close·(re)label a GitLab issue / answer |
-| `DECK_ENRICH_CMD` | `e` — generate a detail card | task id | async |
-| `DECK_INGEST_CMD` | `I` — pull in new tasks | (none) | async, auto-reloads |
-| `DECK_CARD_DIR` | detail-pane card | — | reads `<dir>/<ref>.md` |
+Resolution order: built-in defaults → `DECK_*` env vars → the TOML file (the **file wins**).
 
-The command in each var is split on spaces and run with the argument(s) appended
-(e.g. `DECK_OPEN_CMD="mytool open"` runs `mytool open <url>`). `enter` and `:` run in
-the foreground (the TUI suspends) so the command can prompt or show a picker.
+## Optional integrations
+
+deck is fully usable on its own. These hooks add extra keys **only when configured**
+(otherwise the key is hidden), so you can wire it to your own automation — set them in
+`[hooks]`/`[cards]` (above) or via the `DECK_*` env vars:
+
+| Config (`[hooks]`) · env | Enables | Receives | Notes |
+|---|---|---|---|
+| `open` · `DECK_OPEN_CMD` | `enter` — open a workspace | source URL | foreground (can show a picker) |
+| `agent` · `DECK_AGENT_CMD` | `:` — instruct an agent on the card | task id + instruction | foreground; draft mail / comment·close·(re)label a GitLab issue / answer |
+| `enrich` · `DECK_ENRICH_CMD` | `e` — generate a detail card | task id | async |
+| `ingest` · `DECK_INGEST_CMD` | `I` — pull in new tasks | (none) | async, auto-reloads |
+| `cards.dir` · `DECK_CARD_DIR` | detail-pane card | — | reads `<dir>/<ref>.md` |
+
+Each command line is split on spaces and run with the argument(s) appended
+(`open = "mytool open"` runs `mytool open <url>`). `enter` and `:` run in the foreground
+(the TUI suspends) so the command can prompt or show a picker.
 
 ### With a local LLM (no cloud)
 
